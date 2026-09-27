@@ -119,7 +119,7 @@ run-app: build-app # Build then launch (Debug) with log streaming
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
 	"$$build_dir/$$product/Contents/MacOS/$$exec_name"
 
-install-dev-build: build-app # install dev build to /Applications
+install-dev-build: build-app # Install the dev build to /Applications and relaunch it
 	@$(SELECT_DEVELOPER_DIR); \
 	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -derivedDataPath "$(DERIVED_DATA_PATH)" -showBuildSettings -json 2>/dev/null)"; \
 	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
@@ -130,10 +130,17 @@ install-dev-build: build-app # install dev build to /Applications
 		echo "app not found: $$src"; \
 		exit 1; \
 	fi; \
+	bundle_id="$$(echo "$$settings" | jq -r '.[0].buildSettings.PRODUCT_BUNDLE_IDENTIFIER')"; \
+	if pgrep -f "$$dst/Contents/MacOS/" >/dev/null; then \
+		echo "quitting $$product"; \
+		osascript -e "quit app id \"$$bundle_id\"" >/dev/null 2>&1 || pkill -f "$$dst/Contents/MacOS/"; \
+		while pgrep -f "$$dst/Contents/MacOS/" >/dev/null; do sleep 0.2; done; \
+	fi; \
 	echo "copying $$src -> $$dst"; \
 	rm -rf "$$dst"; \
 	ditto "$$src" "$$dst"; \
-	echo "installed $$dst"
+	echo "installed $$dst"; \
+	open "$$dst"
 
 archive: $(TUIST_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
 	mkdir -p build

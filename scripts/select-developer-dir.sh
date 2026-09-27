@@ -51,6 +51,18 @@ for dir in ${candidates[@]+"${candidates[@]}"}; do
   fi
 done
 
+# No Zig-linkable Xcode, but Command Line Tools has an SDK the pinned Zig can
+# link: use the newest full Xcode, and scripts/zig-sdk-env.sh points zig's SDK
+# lookups at that Command Line Tools SDK.
+if "$(dirname "${BASH_SOURCE[0]}")/zig-sdk-fallback.sh" >/dev/null; then
+  for dir in ${candidates[@]+"${candidates[@]}"}; do
+    if [ -x "${dir}/usr/bin/xcodebuild" ]; then
+      printf '%s\n' "${dir}"
+      exit 0
+    fi
+  done
+fi
+
 cat >&2 <<'EOF'
 error: no Zig-linkable Xcode found.
 

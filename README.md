@@ -6,9 +6,10 @@ Run several coding agents side by side from one window: each task gets its own g
 its own real terminal. Sessions persist in the background, so quitting the app or dropping an SSH
 connection loses nothing.
 
-[kelpie.sh](https://github.com/ObserverMoment/kelpie)
-
-<img width="3180" height="1788" alt="Kelpie screenshot" src="https://github.com/user-attachments/assets/72a8dc95-020a-4dc2-9010-ba1adc9518ba" />
+Kelpie is a fork of [Supacode](https://github.com/supabitapp/supacode) by Supabit, distributed
+under the same Functional Source License (see [LICENSE](LICENSE)). It has its own bundle ID,
+config directory (`~/.kelpie`), CLI (`kelpie`), and zmx session prefix (`kelp-`), so it runs
+alongside an installed Supacode without sharing state.
 
 ## Features
 
@@ -73,7 +74,8 @@ you can bind an action to a hotkey or fire it from another app.
 - macOS 26.0+
 - [mise](https://mise.jdx.dev/) for the pinned toolchain. Add `~/.local/bin` to your `PATH`.
 - git submodules: `git submodule update --init --recursive`
-- **Xcode 26.3** if you are on macOS 26.4+ (see [below](#building-on-macos-264-tahoe)).
+- The Xcode Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`
+- On Xcode 26.4+: Command Line Tools with the macOS 26.2 SDK, or Xcode 26.3 (see [below](#building-on-macos-264-tahoe)).
 
 ## Quick start
 
@@ -82,8 +84,10 @@ git clone --recursive git@github.com:ObserverMoment/kelpie.git
 cd kelpie
 mise install
 make doctor    # check every build prerequisite and print fixes for anything missing
-make run-app   # build and launch the Debug app
+make install-dev-build   # build Debug, install to /Applications/kelpie.app, and relaunch
 ```
+
+To update, pull `main` and run `make install-dev-build` again.
 
 `make doctor` verifies mise, submodules, a Zig-linkable Xcode, the Metal Toolchain, and the
 pinned tools, and prints the exact command to fix anything that is missing. The build targets
@@ -99,21 +103,45 @@ make run-app                     # build and launch
 
 ### Building on macOS 26.4+ (Tahoe)
 
-GhosttyKit is built with a pinned Zig (`0.15.2`, required exactly by ghostty) whose linker
-cannot link the macOS 26.4+ SDK: that SDK dropped the `arm64-macos` slice from `libSystem.tbd`
-([ziglang/zig#31658](https://github.com/ziglang/zig/issues/31658)), so the build fails with a
-wall of `undefined symbol` errors. Install [Xcode 26.3](https://developer.apple.com/download/all/?q=Xcode%2026.3),
-which ships the macOS 26.2 SDK that still has `arm64-macos`. You do not need to switch it
-globally: the build auto-detects a Zig-linkable Xcode and pins it for that build only. After
-installing Xcode 26.3 once:
+GhosttyKit is built with a pinned Zig (`0.15.2`, required exactly by ghostty) that cannot use the
+macOS 26.4+ SDK or its tools:
 
-```bash
-sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -license accept
-sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -runFirstLaunch
-sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -downloadComponent MetalToolchain
-```
+- The SDK dropped the `arm64-macos` slice from `libSystem.tbd`
+  ([ziglang/zig#31658](https://github.com/ziglang/zig/issues/31658)), so Zig fails with
+  `undefined symbol` errors.
+- The newer `libtool` drops Zig's misaligned archive members, so `libghostty.a` loses its
+  symbols and the app fails to link.
+
+The build handles this in one of two ways:
+
+- **Command Line Tools fallback (default here).** If Command Line Tools has a macOS SDK of 26.3 or
+  older (for example `MacOSX26.2.sdk`), `scripts/zig-sdk-env.sh` keeps your current Xcode for
+  `xcodebuild` and Metal, and points only Zig's SDK lookups and `libtool` at Command Line Tools
+  through `scripts/zig-sdk-shim/`.
+- **Xcode 26.3.** Install [Xcode 26.3](https://developer.apple.com/download/all/?q=Xcode%2026.3)
+  next to your current Xcode. The build detects it and pins it for the Zig build only:
+
+  ```bash
+  sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -license accept
+  sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -runFirstLaunch
+  sudo DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer xcodebuild -downloadComponent MetalToolchain
+  ```
 
 See [AGENTS.md](AGENTS.md) for the full rationale and the rest of the architecture.
+
+## Staying in sync with Supacode
+
+```bash
+scripts/sync-upstream.sh   # merge the latest supabitapp/supacode main
+make install-dev-build
+```
+
+The script rebrands each upstream snapshot with `scripts/rebrand.py` onto the `upstream-rebranded`
+branch and merges that branch, so a merge carries only upstream's own changes. Conflicts appear
+only where Kelpie changed the same lines. Add new upstream renames to `scripts/rebrand.py`.
+
+To copy an existing Supacode setup (settings, repositories, sidebar, layouts) into Kelpie, run
+`scripts/import-supacode.sh`.
 
 ## Development
 

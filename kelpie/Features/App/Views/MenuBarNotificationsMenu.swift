@@ -323,7 +323,7 @@ struct MenuBarNotificationsLabel: View {
       Text(unreadCount > 0 ? "\(unreadCount)" : "")
         .monospacedDigit()
     } icon: {
-      Image("MenuBarSC")
+      Image("MenuBarKelpie")
         .renderingMode(.template)
         .resizable()
         .aspectRatio(contentMode: .fit)

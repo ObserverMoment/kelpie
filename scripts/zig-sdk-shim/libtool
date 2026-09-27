@@ -1,0 +1,5 @@
+#!/bin/bash
+# Xcode 26.4+ libtool drops Zig 0.15's misaligned archive members, leaving
+# libghostty without its symbols. Use the Command Line Tools libtool that
+# ships alongside ZIG_SDKROOT instead.
+exec "${ZIG_SDKROOT%/SDKs/*}/usr/bin/libtool" "$@"

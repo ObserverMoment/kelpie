@@ -63,14 +63,10 @@
 	<string>$(POSTHOG_HOST)</string>
 	<key>SentryDSN</key>
 	<string>$(SENTRY_DSN)</string>
-	<key>SUFeedURL</key>
-    <string>https://github.com/ObserverMoment/kelpie/releases/latest/download/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>eBdTbl+6sR8gxO1zyzyvdQHuJrXMLxD31oCc+JoW5jo=</string>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUAutomaticallyUpdate</key>
-	<true/>
+	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

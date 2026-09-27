@@ -27,8 +27,9 @@ class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
 extension UpdaterClient: DependencyKey {
   static let liveValue: UpdaterClient = {
     let delegate = SparkleUpdateDelegate()
+    // Kelpie has no appcast yet (updates are local rebuilds), so Sparkle never starts.
     let controller = SPUStandardUpdaterController(
-      startingUpdater: true,
+      startingUpdater: false,
       updaterDelegate: delegate,
       userDriverDelegate: nil
     )

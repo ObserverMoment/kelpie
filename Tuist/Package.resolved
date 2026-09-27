@@ -1,5 +1,5 @@
 {
-  "originHash" : "6883d9541de15959cd4462bc431ca5dbf7b08f357381d8db313153aede9caeff",
+  "originHash" : "08b8708c670daf38e44861d1e586142b0ed373251f128f47146c9c1c382af6fd",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sparkle-project/Sparkle",
       "state" : {
-        "revision" : "afea2cda87819c960114f26e26f369a1a0945b17",
-        "version" : "2.9.0-beta.2"
+        "revision" : "ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a",
+        "version" : "2.9.6"
       }
     },
     {
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-composable-architecture",
       "state" : {
-        "revision" : "5b0890fabfd68a2d375d68502bc3f54a8548c494",
-        "version" : "1.23.1"
+        "revision" : "cc8e5f1659b53e6df2a21601e6cb9468a6dc00cb",
+        "version" : "1.23.3"
       }
     },
     {

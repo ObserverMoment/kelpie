@@ -1,0 +1,8 @@
+#!/bin/bash
+# Answers macOS SDK path lookups with ZIG_SDKROOT and delegates everything
+# else to the real xcrun. Put on PATH by scripts/zig-sdk-env.sh.
+if [[ -n "${ZIG_SDKROOT:-}" && " $* " == *" --show-sdk-path "* && " $* " != *iphone* ]]; then
+  printf '%s\n' "${ZIG_SDKROOT}"
+  exit 0
+fi
+exec /usr/bin/xcrun "$@"

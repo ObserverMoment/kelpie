@@ -105,7 +105,8 @@ fi
 # 8. fish. The remote-shell quoting tests run the generated ssh command through
 # a real fish parser, because fish is the shell whose single-quote handling the
 # quoting contract exists for.
-if command -v fish >/dev/null 2>&1; then
+# Tests only, so the quiet build preflight does not block on it.
+if [ "${quiet}" -eq 1 ] || command -v fish >/dev/null 2>&1; then
   pass "fish available (remote-shell quoting tests)"
 else
   fail "fish missing (make test runs the remote-shell quoting tests against it)" \

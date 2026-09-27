@@ -8,4 +8,3 @@ xcbeautify = "3.2.1"
 # the Swift toolchain: 602.x ↔ Swift 6.2.
 "spm:swiftlang/swift-format" = "602.0.0"
 "github:ldomaradzki/xcsift" = "latest"
-"npm:create-dmg" = "latest"

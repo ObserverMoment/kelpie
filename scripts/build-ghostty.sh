@@ -11,6 +11,8 @@ repo_root="${srcroot}"
 # Plain assignment, separate export, so a selector failure aborts under set -e.
 DEVELOPER_DIR="$("${script_dir}/select-developer-dir.sh")"
 export DEVELOPER_DIR
+# shellcheck source=zig-sdk-env.sh
+source "${script_dir}/zig-sdk-env.sh"
 ghostty_dir="${srcroot}/ThirdParty/ghostty"
 ghostty_submodule_path="${ghostty_dir#"${repo_root}/"}"
 ghostty_build_root="${srcroot}/.build/ghostty"
