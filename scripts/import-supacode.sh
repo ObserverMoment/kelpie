@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Imports an existing Supacode setup into Kelpie: settings, open repositories
-# and folders, sidebar, terminal layouts, and UI state. Supacode's own files
-# and preferences are only read.
+# and folders, sidebar, terminal layouts, window size, and UI state. Supacode's
+# own files and preferences are only read. Claude config directories that
+# Supacode hooked into are listed in Kelpie's Settings > Coding agents, ready
+# to install.
 #
 # Kelpie's SettingsRelocationMigrator converts the legacy ~/.kelpie files on
 # the next launch, but it only seeds stores Kelpie hasn't written yet. So this
@@ -44,13 +46,13 @@ for name in config.json routes.json repos.json .relocated; do
   fi
 done
 
-python3 - "${supacode_dir}" "${kelpie_dir}" <<'EOF'
+python3 - "${supacode_dir}" "${kelpie_dir}" "${kelpie_config_dir}" <<'EOF'
 import json
 import pathlib
 import shutil
 import sys
 
-src_dir, dst_dir = map(pathlib.Path, sys.argv[1:3])
+src_dir, dst_dir, config_dir = map(pathlib.Path, sys.argv[1:4])
 
 # Legacy files, at the names Kelpie's relocation migrator looks for.
 dst_dir.mkdir(exist_ok=True)
@@ -74,7 +76,19 @@ if layouts.exists():
     copied.append("layouts.json")
 
 
-print(f"copied {', '.join(copied)}")
+# Claude config directories carrying Supacode's hooks become Kelpie agent
+# records, so Settings > Coding agents offers to install into each of them.
+home = pathlib.Path.home()
+settings_files = [*home.glob(".claude*/settings.json"), *home.glob(".claude*/*/settings.json")]
+hooked = sorted(p.parent for p in settings_files if "supacode-managed-hook" in p.read_text(errors="ignore"))
+wanted = [{"agent": "claude"} if d == home / ".claude" else {"agent": "claude", "path": str(d)} for d in hooked]
+agents_file = config_dir / "agents.json"
+records = json.loads(agents_file.read_text()).get("agents", []) if agents_file.exists() else []
+added = [r for r in wanted if r not in records]
+config_dir.mkdir(parents=True, exist_ok=True)
+agents_file.write_text(json.dumps({"agents": records + added}, indent=2) + "\n")
+
+print(f"copied {', '.join(copied)}; agent records added: {len(added)}")
 EOF
 
 # Preferences go through UserDefaults itself: its plists hold dates (such as
@@ -85,9 +99,13 @@ import Foundation
 
 let defaults = UserDefaults.standard
 let source = defaults.persistentDomain(forName: "${supacode_domain}") ?? [:]
-// App keys only: system, Sparkle, and PostHog keys stay per app.
+// App keys only: system, Sparkle, and PostHog keys stay per app...
 let systemPrefixes = ["NS", "SU", "PHG", "Apple", "com.apple"]
-let imported = source.filter { key, _ in !systemPrefixes.contains { key.hasPrefix(\$0) } }
+// Except the main window frame and its split-view (sidebar) widths.
+let windowKeys = ["NSWindow Frame main", "NSSplitView Subview Frames main", "NSSplitView Subview Frames settings"]
+let imported = source.filter { key, _ in
+  windowKeys.contains { key.hasPrefix(\$0) } || !systemPrefixes.contains { key.hasPrefix(\$0) }
+}
 // Kelpie's sidebar and layout keys are cleared so the migrator seeds them.
 let reseeded: Set<String> = ["sidebarState", "layoutsFile", "settingsRelocationPendingNotified"]
 let kept = (defaults.persistentDomain(forName: "${kelpie_domain}") ?? [:]).filter { !reseeded.contains(\$0.key) }
