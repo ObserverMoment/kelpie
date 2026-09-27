@@ -1,0 +1,440 @@
+import ComposableArchitecture
+import Foundation
+import KelpieSettingsShared
+
+struct DeeplinkClient: Sendable {
+  var parse: @Sendable (URL) -> Deeplink?
+}
+
+extension DeeplinkClient: DependencyKey {
+  static let liveValue = DeeplinkClient { DeeplinkParser.parse($0) }
+  static let testValue = DeeplinkClient(parse: unimplemented("DeeplinkClient.parse", placeholder: nil))
+}
+
+extension DependencyValues {
+  var deeplinkClient: DeeplinkClient {
+    get { self[DeeplinkClient.self] }
+    set { self[DeeplinkClient.self] = newValue }
+  }
+}
+
+// MARK: - Parser.
+
+private nonisolated enum DeeplinkParser {
+  private static let logger = KelpieLogger("Deeplink")
+
+  static func parse(_ url: URL) -> Deeplink? {
+    guard url.scheme == "kelpie" else {
+      logger.debug("Ignoring non-kelpie URL: \(url.scheme ?? "nil")")
+      return nil
+    }
+    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+      logger.warning("Failed to parse URL components: \(url)")
+      return nil
+    }
+    // For custom-scheme URLs, the host acts as the top-level route (e.g., "worktree", "repo", "settings").
+    guard let host = components.host, !host.isEmpty else { return .open }
+    // url.path() defaults to percentEncoded: true, keeping %2F intact so encoded slashes
+    // are not split as path separators. components.path is percent-decoded, which would
+    // incorrectly split worktree IDs containing literal slashes.
+    let pathSegments = url.path()
+      .split(separator: "/", omittingEmptySubsequences: true)
+      .map(String.init)
+    let queryItems = components.queryItems ?? []
+
+    switch host {
+    case "worktree":
+      // Rewrapped here so the action parsers stay unaware of the dispatch flag.
+      guard
+        case .worktree(let id, let action, _)? = parseWorktree(
+          pathSegments: pathSegments,
+          queryItems: queryItems,
+        )
+      else { return nil }
+      return .worktree(id: id, action: action, background: parseBoolFlag("background", from: queryItems))
+    case "repo":
+      return parseRepo(pathSegments: pathSegments, queryItems: queryItems)
+    case "help":
+      return .help
+    case "settings":
+      // settings/repo/<encoded-repo-id>[/scripts] → open repository settings.
+      if pathSegments.first == "repo" {
+        guard pathSegments.count >= 2,
+          let rawRepositoryID = pathSegments[1].removingPercentEncoding, !rawRepositoryID.isEmpty
+        else {
+          logger.warning("Settings repo deeplink missing or invalid repository ID.")
+          return nil
+        }
+        let repositoryID = RepositoryID(rawRepositoryID)
+        if pathSegments.count >= 3 {
+          guard pathSegments[2] == "scripts" else {
+            logger.warning("Unrecognized settings repo subsection: \(pathSegments[2]).")
+            return nil
+          }
+          return .settingsRepoScripts(repositoryID: repositoryID)
+        }
+        return .settingsRepo(repositoryID: repositoryID)
+      }
+      let section: Deeplink.DeeplinkSettingsSection? = pathSegments.first.flatMap { raw in
+        // Legacy `codingAgents` URLs still route to the developer pane.
+        if raw == "codingAgents" { return .developer }
+        guard let parsed = Deeplink.DeeplinkSettingsSection(rawValue: raw) else {
+          logger.warning("Unrecognized settings section: \(raw).")
+          return nil
+        }
+        return parsed
+      }
+      return .settings(section: section)
+    default:
+      logger.warning("Unrecognized deeplink host: \(host)")
+      return nil
+    }
+  }
+
+  /// Parse an explicit-opt-in bool flag: only `<name>=true` returns true, so a
+  /// malformed or absent value keeps the safe default. Unrecognized values are
+  /// logged and ignored.
+  private static func parseBoolFlag(_ name: String, from queryItems: [URLQueryItem]) -> Bool {
+    guard let item = queryItems.first(where: { $0.name == name }) else { return false }
+    if item.value == "true" { return true }
+    if item.value != "false" {
+      logger.warning("Ignoring unrecognized \(name) value: \(item.value ?? "nil")")
+    }
+    return false
+  }
+
+  // MARK: - Worktree.
+
+  private static func parseWorktree(
+    pathSegments: [String],
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    // Expected: <percent-encoded-worktree-id>[/<action>[/<sub-path>...]].
+    guard !pathSegments.isEmpty else {
+      logger.warning("Worktree deeplink missing id")
+      return nil
+    }
+    guard let rawWorktreeID = pathSegments[0].removingPercentEncoding, !rawWorktreeID.isEmpty else {
+      logger.warning("Failed to percent-decode worktree ID")
+      return nil
+    }
+    // Normalize trailing slashes so that IDs with and without a trailing
+    // slash resolve to the same worktree.
+    let worktreeID = WorktreeID(rawWorktreeID.hasSuffix("/") ? String(rawWorktreeID.dropLast()) : rawWorktreeID)
+    guard pathSegments.count >= 2 else {
+      return .worktree(id: worktreeID, action: .select)
+    }
+    let action = pathSegments[1]
+
+    switch action {
+    case "run":
+      return .worktree(id: worktreeID, action: .run)
+    case "stop":
+      return .worktree(id: worktreeID, action: .stop)
+    case "archive":
+      return .worktree(id: worktreeID, action: .archive)
+    case "unarchive":
+      return .worktree(id: worktreeID, action: .unarchive)
+    case "delete":
+      return .worktree(id: worktreeID, action: .delete)
+    case "pin":
+      return .worktree(id: worktreeID, action: .pin)
+    case "unpin":
+      return .worktree(id: worktreeID, action: .unpin)
+    case "appearance":
+      return parseWorktreeAppearance(worktreeID: worktreeID, queryItems: queryItems)
+    case "tab":
+      return parseWorktreeTab(
+        worktreeID: worktreeID,
+        pathSegments: pathSegments,
+        queryItems: queryItems,
+      )
+    case "pane":
+      return parseWorktreePane(
+        worktreeID: worktreeID,
+        pathSegments: pathSegments,
+        queryItems: queryItems,
+      )
+    case "script":
+      return parseWorktreeScript(worktreeID: worktreeID, pathSegments: pathSegments)
+    default:
+      logger.warning("Unrecognized worktree action: \(action)")
+      return nil
+    }
+  }
+
+  private static func parseWorktreeAppearance(
+    worktreeID: Worktree.ID,
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    let titleItem = queryItems.first { $0.name == "title" }
+    let colorItem = queryItems.first { $0.name == "color" }
+    guard titleItem != nil || colorItem != nil else {
+      logger.warning("Appearance deeplink missing title or color query param")
+      return nil
+    }
+    let title = titleItem.map { $0.value ?? "" }
+    // An empty color passes through so execution rejects it with a visible
+    // alert (and CLI ok=false) instead of a log-only drop here.
+    let color = colorItem.map { $0.value ?? "" }
+    return .worktree(id: worktreeID, action: .appearance(title: title, color: color))
+  }
+
+  private static func parseWorktreeScript(
+    worktreeID: Worktree.ID,
+    pathSegments: [String]
+  ) -> Deeplink? {
+    // Expected: "script/<script-uuid>/run" or "script/<script-uuid>/stop".
+    guard pathSegments.count >= 4 else {
+      logger.warning("Script deeplink missing script ID or action")
+      return nil
+    }
+    guard let scriptID = UUID(uuidString: pathSegments[2]) else {
+      logger.warning("Invalid script UUID: \(pathSegments[2])")
+      return nil
+    }
+    let verb = pathSegments[3]
+    switch verb {
+    case "run":
+      return .worktree(id: worktreeID, action: .runScript(scriptID: scriptID))
+    case "stop":
+      return .worktree(id: worktreeID, action: .stopScript(scriptID: scriptID))
+    default:
+      logger.warning("Unrecognized script action: \(verb)")
+      return nil
+    }
+  }
+
+  private static func parseWorktreeTab(
+    worktreeID: Worktree.ID,
+    pathSegments: [String],
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    // "tab/<tab-uuid>" → focus tab.
+    // "tab/new" → create new tab.
+    // "tab/<tab-uuid>/rename" → rename tab.
+    // "tab/<tab-uuid>/destroy" → close tab.
+    // "tab/<tab-uuid>/surface/<surface-uuid>" → focus surface.
+    // "tab/<tab-uuid>/surface/<surface-uuid>/split" → split surface.
+    // "tab/<tab-uuid>/surface/<surface-uuid>/destroy" → close surface.
+    guard pathSegments.count >= 3 else {
+      logger.warning("Tab deeplink missing sub-action or tab ID")
+      return nil
+    }
+    let thirdSegment = pathSegments[2]
+
+    if thirdSegment == "new" {
+      let input = queryItems.first(where: { $0.name == "input" })?.value
+      let id = queryItems.first(where: { $0.name == "id" })?.value.flatMap(UUID.init(uuidString:))
+      let title = queryItems.first(where: { $0.name == "title" })?.value
+      // Panes have no public identity; a surface UUID addresses the pane
+      // that hosts it. A malformed value fails the parse rather than falling
+      // back to a pane the caller did not ask for.
+      let rawPane = queryItems.first(where: { $0.name == "pane" })?.value
+      let pane = rawPane.flatMap(UUID.init(uuidString:))
+      if rawPane != nil, pane == nil {
+        logger.warning("Invalid pane surface UUID: \(rawPane ?? "")")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .tabNew(input: input, id: id, title: title, pane: pane))
+    }
+
+    guard let tabUUID = UUID(uuidString: thirdSegment) else {
+      logger.warning("Invalid tab UUID: \(thirdSegment)")
+      return nil
+    }
+
+    if pathSegments.count >= 4, pathSegments[3] == "rename" {
+      guard let titleItem = queryItems.first(where: { $0.name == "title" }) else {
+        logger.warning("Tab rename deeplink missing title")
+        return nil
+      }
+      return .worktree(
+        id: worktreeID,
+        action: .tabRename(tabID: tabUUID, title: titleItem.value ?? "")
+      )
+    }
+    if pathSegments.count >= 4, pathSegments[3] == "destroy" {
+      return .worktree(id: worktreeID, action: .tabDestroy(tabID: tabUUID))
+    }
+    if pathSegments.count >= 4, pathSegments[3] == "move" {
+      let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? ""
+      guard let direction = TerminalSplitMenuDirection(deeplinkValue: directionRaw) else {
+        logger.warning("Invalid tab move direction '\(directionRaw)'.")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .tabMove(tabID: tabUUID, direction: direction))
+    }
+
+    // Check for surface sub-path: tab/<tab-uuid>/surface/<surface-uuid>[/split|/destroy].
+    if pathSegments.count >= 5, pathSegments[3] == "surface" {
+      return parseWorktreeSurface(
+        worktreeID: worktreeID,
+        tabUUID: tabUUID,
+        pathSegments: pathSegments,
+        queryItems: queryItems,
+      )
+    }
+
+    return .worktree(id: worktreeID, action: .tab(tabID: tabUUID))
+  }
+
+  private static func parseWorktreeSurface(
+    worktreeID: Worktree.ID,
+    tabUUID: UUID,
+    pathSegments: [String],
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    guard let surfaceUUID = UUID(uuidString: pathSegments[4]) else {
+      logger.warning("Invalid surface UUID: \(pathSegments[4])")
+      return nil
+    }
+
+    let input = queryItems.first(where: { $0.name == "input" })?.value
+
+    if pathSegments.count >= 6, pathSegments[5] == "destroy" {
+      return .worktree(
+        id: worktreeID,
+        action: .surfaceDestroy(tabID: tabUUID, surfaceID: surfaceUUID),
+      )
+    }
+
+    if pathSegments.count >= 6, pathSegments[5] == "split" {
+      let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? "horizontal"
+      guard let direction = SplitDirection(rawValue: directionRaw) else {
+        logger.warning("Invalid split direction '\(directionRaw)'.")
+        return nil
+      }
+      let id = queryItems.first(where: { $0.name == "id" })?.value.flatMap(UUID.init(uuidString:))
+      return .worktree(
+        id: worktreeID,
+        action: .surfaceSplit(tabID: tabUUID, surfaceID: surfaceUUID, direction: direction, input: input, id: id),
+      )
+    }
+
+    return .worktree(
+      id: worktreeID,
+      action: .surface(tabID: tabUUID, surfaceID: surfaceUUID, input: input),
+    )
+  }
+
+  private static func parseWorktreePane(
+    worktreeID: Worktree.ID,
+    pathSegments: [String],
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    // A pane token is a pane id, or the id of a tab / content the pane hosts.
+    guard pathSegments.count >= 3 else {
+      logger.warning("Pane deeplink missing sub-action or pane token")
+      return nil
+    }
+    let thirdSegment = pathSegments[2]
+
+    if thirdSegment == "equalize" {
+      return .worktree(id: worktreeID, action: .paneEqualize)
+    }
+    if thirdSegment == "focus" {
+      let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? ""
+      guard let direction = TerminalSplitMenuDirection(deeplinkValue: directionRaw) else {
+        logger.warning("Invalid pane focus direction '\(directionRaw)'.")
+        return nil
+      }
+      return .worktree(id: worktreeID, action: .paneFocusDirection(direction: direction))
+    }
+
+    guard let token = UUID(uuidString: thirdSegment) else {
+      logger.warning("Invalid pane token: \(thirdSegment)")
+      return nil
+    }
+
+    guard pathSegments.count >= 4 else {
+      return .worktree(id: worktreeID, action: .paneFocus(token: token))
+    }
+    switch pathSegments[3] {
+    case "split":
+      let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? "horizontal"
+      guard let direction = SplitDirection(rawValue: directionRaw) else {
+        logger.warning("Invalid pane split direction '\(directionRaw)'.")
+        return nil
+      }
+      let input = queryItems.first(where: { $0.name == "input" })?.value
+      let rawID = queryItems.first(where: { $0.name == "id" })?.value
+      let id = rawID.flatMap(UUID.init(uuidString:))
+      // A malformed id fails the parse rather than minting a random one the
+      // caller cannot then target.
+      if rawID != nil, id == nil {
+        logger.warning("Invalid pane split id: \(rawID ?? "")")
+        return nil
+      }
+      return .worktree(
+        id: worktreeID,
+        action: .paneSplit(token: token, direction: direction, input: input, id: id)
+      )
+    case "destroy":
+      return .worktree(id: worktreeID, action: .paneDestroy(token: token))
+    case "zoom":
+      return .worktree(id: worktreeID, action: .paneZoom(token: token))
+    case "window":
+      return .worktree(id: worktreeID, action: .paneWindow(token: token))
+    default:
+      logger.warning("Unrecognized pane action: \(pathSegments[3])")
+      return nil
+    }
+  }
+
+  // MARK: - Repo.
+
+  private static func parseRepo(
+    pathSegments: [String],
+    queryItems: [URLQueryItem]
+  ) -> Deeplink? {
+    // "open" → add repository.
+    // "<encoded-id>/worktree/new" → create worktree.
+    guard let first = pathSegments.first else {
+      logger.warning("Repo deeplink missing action or id")
+      return nil
+    }
+
+    if first == "open" {
+      guard let pathValue = queryItems.first(where: { $0.name == "path" })?.value,
+        !pathValue.isEmpty, pathValue.hasPrefix("/")
+      else {
+        logger.warning("Repo open deeplink missing or invalid path query param.")
+        return nil
+      }
+      return .repoOpen(path: URL(fileURLWithPath: pathValue))
+    }
+
+    guard let rawRepositoryID = first.removingPercentEncoding, !rawRepositoryID.isEmpty else {
+      logger.warning("Failed to percent-decode repository ID")
+      return nil
+    }
+    let repositoryID = RepositoryID(rawRepositoryID)
+    guard pathSegments.count >= 3,
+      pathSegments[1] == "worktree",
+      pathSegments[2] == "new"
+    else {
+      logger.warning("Unrecognized repo deeplink path")
+      return nil
+    }
+    let branch = queryItems.first(where: { $0.name == "branch" })?.value
+    let baseRef = queryItems.first(where: { $0.name == "base" })?.value
+    // `upstream=` (empty) is meaningful ("no upstream"), so keep the raw value;
+    // a bare `upstream` key with no `=` has a nil value and counts as omitted.
+    let upstream = queryItems.first(where: { $0.name == "upstream" })?.value
+    let fetchOrigin = queryItems.first(where: { $0.name == "fetch" })?.value == "true"
+    let worktreeName = queryItems.first(where: { $0.name == "name" })?.value
+    let worktreePath = queryItems.first(where: { $0.name == "location" })?.value
+    return .repoWorktreeNew(
+      repositoryID: repositoryID,
+      branch: branch,
+      baseRef: baseRef,
+      upstream: upstream,
+      fetchOrigin: fetchOrigin,
+      worktreeName: worktreeName,
+      worktreePath: worktreePath,
+      background: parseBoolFlag("background", from: queryItems),
+      pin: parseBoolFlag("pin", from: queryItems),
+    )
+  }
+}

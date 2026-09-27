@@ -1,0 +1,561 @@
+import ComposableArchitecture
+import Foundation
+import KelpieSettingsShared
+import Testing
+
+@testable import kelpie
+
+@MainActor
+struct SidebarItemFeatureTests {
+  // MARK: - Equality-guarded data deltas.
+
+  @Test func diffStatsChangeMutatesOnceThenNoOps() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    await store.send(.diffStatsChanged(added: 3, removed: 1)) {
+      $0.addedLines = 3
+      $0.removedLines = 1
+    }
+    // Same payload: no-op.
+    await store.send(.diffStatsChanged(added: 3, removed: 1))
+  }
+
+  @Test func lifecycleEqualityGuardSkipsNoOps() async {
+    var state = makeState(name: "feature")
+    state.lifecycle = .archiving
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(.lifecycleChanged(.archiving))
+    await store.send(.lifecycleChanged(.idle)) {
+      $0.lifecycle = .idle
+    }
+  }
+
+  @Test func terminalProjectionReplacesRunningScriptsWholesale() async {
+    // The projection is the single writer: whatever set it carries replaces
+    // the row's, so a stale mirror can't survive a reconcile (#573).
+    let scriptA = UUID()
+    let scriptB = UUID()
+    var state = makeState(name: "feature")
+    state.runningScripts = [.init(id: scriptA, tint: .orange)]
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(runningScripts: [.init(id: scriptB, tint: .blue)])
+      )
+    ) {
+      $0.hasTerminalProjection = true
+      $0.runningScripts = [.init(id: scriptB, tint: .blue)]
+    }
+    // Identical set: no-op.
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(runningScripts: [.init(id: scriptB, tint: .blue)])
+      )
+    )
+    // Empty set clears the phantom.
+    await store.send(.terminalProjectionChanged(makeProjection(runningScripts: []))) {
+      $0.runningScripts = []
+    }
+  }
+
+  @Test func agentSnapshotEqualityGuardSkipsNoOps() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let instance = AgentPresenceFeature.AgentInstance(
+      agent: .claude,
+      activity: .busy
+    )
+    await store.send(.agentSnapshotChanged(.init(agents: [instance], isWorking: true))) {
+      $0.agentSnapshot = .init(agents: [instance], isWorking: true)
+    }
+    // Same payload: no-op.
+    await store.send(.agentSnapshotChanged(.init(agents: [instance], isWorking: true)))
+    // isWorking flip only.
+    await store.send(.agentSnapshotChanged(.init(agents: [instance], isWorking: false))) {
+      $0.agentSnapshot = .init(agents: [instance], isWorking: false)
+    }
+  }
+
+  @Test func agentErrorFlagTracksSnapshot() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let errored = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .error)
+    await store.send(.agentSnapshotChanged(.init(agents: [errored], hasError: true))) {
+      $0.agentSnapshot = .init(agents: [errored], hasError: true)
+    }
+    #expect(store.state.hasAgentError)
+
+    // A restart clears it and puts the row back to work.
+    let busy = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+    await store.send(.agentSnapshotChanged(.init(agents: [busy], isWorking: true))) {
+      $0.agentSnapshot = .init(agents: [busy], isWorking: true)
+    }
+    #expect(!store.state.hasAgentError)
+    #expect(store.state.hasAgentActivity)
+  }
+
+  // MARK: - Terminal projection per-field guards.
+
+  @Test func terminalProjectionEachFieldGuardedIndependently() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let surface1 = UUID()
+    let surface2 = UUID()
+    let notif = WorktreeTerminalNotification(
+      surfaceID: surface1,
+      title: "Notification",
+      body: "hi",
+      createdAt: Date(timeIntervalSince1970: 0)
+    )
+    let baseline = makeProjection(surfaceIDs: [surface1])
+    await store.send(.terminalProjectionChanged(baseline)) {
+      $0.hasTerminalProjection = true
+      $0.surfaceIDs = [surface1]
+    }
+    // Identical projection: no mutation.
+    await store.send(.terminalProjectionChanged(baseline))
+    // surfaceIDs alone changes.
+    await store.send(
+      .terminalProjectionChanged(makeProjection(surfaceIDs: [surface1, surface2]))
+    ) {
+      $0.surfaceIDs = [surface1, surface2]
+    }
+    // isProgressBusy alone changes (and `isTaskRunning` derives from it).
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(surfaceIDs: [surface1, surface2], isProgressBusy: true)
+      )
+    ) {
+      $0.isProgressBusy = true
+    }
+    // hasUnseenNotifications flips alone (independent of `notifications`).
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(surfaceIDs: [surface1, surface2], isProgressBusy: true, hasUnseenNotifications: true)
+      )
+    ) {
+      $0.hasUnseenNotifications = true
+    }
+    // notifications flip alone.
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(
+          surfaceIDs: [surface1, surface2],
+          isProgressBusy: true,
+          hasUnseenNotifications: true,
+          notifications: [notif]
+        )
+      )
+    ) {
+      $0.notifications = [notif]
+    }
+    // runningScripts flip alone.
+    let scriptID = UUID()
+    await store.send(
+      .terminalProjectionChanged(
+        makeProjection(
+          surfaceIDs: [surface1, surface2],
+          isProgressBusy: true,
+          hasUnseenNotifications: true,
+          notifications: [notif],
+          runningScripts: [.init(id: scriptID, tint: .blue)]
+        )
+      )
+    ) {
+      $0.runningScripts = [.init(id: scriptID, tint: .blue)]
+    }
+  }
+
+  /// The reducer never treats a stored running script as work: `isTaskRunning`
+  /// is driven by agent activity and terminal progress only, so a projection
+  /// carrying `runningScripts` without either does not shimmer the row (#828).
+  @Test func runningScriptAloneDoesNotMarkTheRowAsTaskRunning() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let scriptID = UUID()
+    await store.send(
+      .terminalProjectionChanged(makeProjection(runningScripts: [.init(id: scriptID, tint: .purple)]))
+    ) {
+      $0.hasTerminalProjection = true
+      $0.runningScripts = [.init(id: scriptID, tint: .purple)]
+    }
+    #expect(!store.state.isProgressBusy)
+    #expect(!store.state.hasAgentActivity)
+    #expect(!store.state.isTaskRunning)
+
+    // An agent starting work shimmers the row even while the script keeps running.
+    let busy = AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy)
+    await store.send(.agentSnapshotChanged(.init(agents: [busy], isWorking: true))) {
+      $0.agentSnapshot = .init(agents: [busy], isWorking: true)
+    }
+    #expect(store.state.isTaskRunning)
+  }
+
+  @Test func terminalProjectionTogglesAllTabsDormant() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    // Every tab hibernated: the row lights its sleep marker.
+    await store.send(.terminalProjectionChanged(makeProjection(allTabsDormant: true))) {
+      $0.hasTerminalProjection = true
+      $0.allTabsDormant = true
+    }
+    // Same value: no-op.
+    await store.send(.terminalProjectionChanged(makeProjection(allTabsDormant: true)))
+    // A tab wakes: the marker clears.
+    await store.send(.terminalProjectionChanged(makeProjection(allTabsDormant: false))) {
+      $0.allTabsDormant = false
+    }
+  }
+
+  // MARK: - Stale-PR guard.
+
+  @Test func pullRequestChangedDropsResultWhenBranchHasFlipped() async {
+    // Post-flip state: row's branch is already "feature/y", a live PR is in place,
+    // and a late result from the prior "feature/x" query is about to arrive.
+    var state = makeState(name: "feature/y")
+    state.branchName = "feature/y"
+    let livePR = ForgePullRequest(
+      number: 12,
+      title: "Live",
+      state: .open,
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      mergedAt: nil,
+      url: "https://example.com/pull/12",
+      headRefName: "feature/y",
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "tester",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    state.pullRequest = livePR
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    let stalePR = ForgePullRequest(
+      number: 99,
+      title: "Stale",
+      state: .open,
+      additions: 0,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      mergedAt: nil,
+      url: "https://example.com/pull/99",
+      headRefName: "feature/x",
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "tester",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    // Late stale result must not replace the live PR.
+    await store.send(.pullRequestChanged(stalePR, branchAtQueryTime: "feature/x"))
+    #expect(store.state.pullRequest == livePR)
+  }
+
+  @Test func pullRequestChangedClearsWatermarkOnSuccessAndOnIdenticalReissue() async {
+    var state = makeState(name: "feature")
+    state.branchName = "feature"
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    let pullRequest = ForgePullRequest(
+      number: 1,
+      title: "First",
+      state: .open,
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      mergedAt: nil,
+      url: "https://example.com/pull/1",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: 1,
+      authorLogin: "tester",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    await store.send(.pullRequestQueryStarted(branch: "feature")) {
+      $0.pullRequestBranchAtQueryTime = "feature"
+    }
+    // Success path: PR is written and watermark cleared.
+    await store.send(.pullRequestChanged(pullRequest, branchAtQueryTime: "feature")) {
+      $0.pullRequest = pullRequest
+      $0.pullRequestBranchAtQueryTime = nil
+    }
+    // Identical-payload reissue with a re-armed watermark: PR unchanged, watermark still cleared.
+    await store.send(.pullRequestQueryStarted(branch: "feature")) {
+      $0.pullRequestBranchAtQueryTime = "feature"
+    }
+    await store.send(.pullRequestChanged(pullRequest, branchAtQueryTime: "feature")) {
+      $0.pullRequestBranchAtQueryTime = nil
+    }
+  }
+
+  @Test func pullRequestQueryStartedEqualityGuardSkipsNoOps() async {
+    var state = makeState(name: "feature")
+    state.pullRequestBranchAtQueryTime = "feature"
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    // Same branch: no-op.
+    await store.send(.pullRequestQueryStarted(branch: "feature"))
+    await store.send(.pullRequestQueryStarted(branch: "other")) {
+      $0.pullRequestBranchAtQueryTime = "other"
+    }
+  }
+
+  // MARK: - UI-scalar guards.
+
+  @Test func dragSessionGuardSkipsNoOps() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    await store.send(.dragSessionChanged(isDragging: true)) {
+      $0.isDragging = true
+    }
+    // Same drag state: no-op.
+    await store.send(.dragSessionChanged(isDragging: true))
+  }
+
+  // MARK: - Helpers.
+
+  @Test func pullRequestDetailAppliedEnrichesOnlyDetailFields() async {
+    var state = makeState(name: "feature")
+    let summary = ForgePullRequest(
+      number: 12,
+      title: "MR",
+      state: .open,
+      additions: nil,
+      deletions: nil,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: nil,
+      mergedAt: nil,
+      url: "https://gitlab.com/group/proj/-/merge_requests/12",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: nil,
+      authorLogin: "dev",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    state.pullRequest = summary
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+    let detail = ForgePullRequestDetail(
+      mergeable: "MERGEABLE",
+      mergeStateStatus: nil,
+      reviewDecision: nil,
+      statusCheckRollup: nil,
+      forgeBlockedReason: nil
+    )
+
+    await store.send(.pullRequestDetailApplied(pullRequestNumber: 12, detail)) {
+      $0.pullRequest = summary.applying(detail)
+    }
+    // The summary tier stays the sole writer of state and merge timestamps.
+    #expect(store.state.pullRequest?.state == .open)
+    #expect(store.state.pullRequest?.mergedAt == nil)
+    #expect(store.state.pullRequest?.mergeable == "MERGEABLE")
+    // A detail result for a different proposal is dropped.
+    await store.send(.pullRequestDetailApplied(pullRequestNumber: 99, detail))
+    // Detail never touches the branch watermark.
+    #expect(store.state.pullRequestBranchAtQueryTime == nil)
+  }
+
+  @Test func thinSummaryPreservesEnrichmentOnlyWhileTheProposalIsUnchanged() async {
+    var state = makeState(name: "feature")
+    let updatedAt = Date(timeIntervalSince1970: 1_000_000)
+    let thinSummary = ForgePullRequest(
+      number: 12,
+      title: "MR",
+      state: .open,
+      additions: nil,
+      deletions: nil,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: updatedAt,
+      mergedAt: nil,
+      url: "https://gitlab.com/group/proj/-/merge_requests/12",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: nil,
+      authorLogin: "dev",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    let detail = ForgePullRequestDetail(
+      mergeable: "MERGEABLE",
+      mergeStateStatus: nil,
+      reviewDecision: nil,
+      statusCheckRollup: nil,
+      forgeBlockedReason: nil
+    )
+    let enriched = thinSummary.applying(detail)
+    state.pullRequest = enriched
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+
+    // Same number, state, and updatedAt: the thin sweep keeps the enrichment.
+    await store.send(.pullRequestChanged(thinSummary, branchAtQueryTime: "feature"))
+    #expect(store.state.pullRequest?.mergeable == "MERGEABLE")
+
+    // A newer updatedAt means the proposal moved server-side; enrichment drops.
+    let movedSummary = ForgePullRequest(
+      number: 12,
+      title: "MR",
+      state: .open,
+      additions: nil,
+      deletions: nil,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: updatedAt.addingTimeInterval(60),
+      mergedAt: nil,
+      url: "https://gitlab.com/group/proj/-/merge_requests/12",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: nil,
+      authorLogin: "dev",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    await store.send(.pullRequestChanged(movedSummary, branchAtQueryTime: "feature")) {
+      $0.pullRequest = movedSummary
+    }
+    #expect(store.state.pullRequest?.mergeable == nil)
+  }
+
+  @Test func rollupOnlySummaryPreservesEnrichmentAndRefreshesThePipeline() async {
+    var state = makeState(name: "feature")
+    let updatedAt = Date(timeIntervalSince1970: 1_000_000)
+    let staleRollup = ForgePullRequestStatusCheckRollup(
+      checks: [ForgePullRequestStatusCheck(name: "Pipeline", status: "IN_PROGRESS")]
+    )
+    let freshRollup = ForgePullRequestStatusCheckRollup(
+      checks: [ForgePullRequestStatusCheck(name: "Pipeline", status: "COMPLETED", conclusion: "SUCCESS")]
+    )
+    let thinSummary = ForgePullRequest(
+      number: 12,
+      title: "MR",
+      state: .open,
+      additions: nil,
+      deletions: nil,
+      isDraft: false,
+      reviewDecision: nil,
+      mergeable: nil,
+      mergeStateStatus: nil,
+      updatedAt: updatedAt,
+      mergedAt: nil,
+      url: "https://gitlab.com/group/proj/-/merge_requests/12",
+      headRefName: "feature",
+      baseRefName: "main",
+      commitsCount: nil,
+      authorLogin: "dev",
+      statusCheckRollup: nil,
+      mergeQueueEntry: nil
+    )
+    state.pullRequest = thinSummary.applying(
+      ForgePullRequestDetail(mergeable: "MERGEABLE", statusCheckRollup: staleRollup)
+    )
+    let store = TestStore(initialState: state) {
+      SidebarItemFeature()
+    }
+
+    // A sweep carrying only the head-pipeline rollup keeps the enrichment and
+    // takes the newer pipeline state.
+    let rollupSummary = thinSummary.applying(ForgePullRequestDetail(statusCheckRollup: freshRollup))
+    await store.send(.pullRequestChanged(rollupSummary, branchAtQueryTime: "feature")) {
+      $0.pullRequest = thinSummary.applying(
+        ForgePullRequestDetail(mergeable: "MERGEABLE", statusCheckRollup: freshRollup)
+      )
+    }
+    #expect(store.state.pullRequest?.mergeable == "MERGEABLE")
+    #expect(store.state.pullRequest?.statusCheckRollup == freshRollup)
+
+    // A rollup-free sweep keeps the cached pipeline alongside the enrichment.
+    await store.send(.pullRequestChanged(thinSummary, branchAtQueryTime: "feature"))
+    #expect(store.state.pullRequest?.statusCheckRollup == freshRollup)
+    #expect(store.state.pullRequest?.mergeable == "MERGEABLE")
+  }
+
+  @Test func pullRequestDetailAppliedNoopsWithoutASummaryProposal() async {
+    let store = TestStore(initialState: makeState(name: "feature")) {
+      SidebarItemFeature()
+    }
+    let detail = ForgePullRequestDetail(
+      mergeable: "MERGEABLE",
+      mergeStateStatus: nil,
+      reviewDecision: nil,
+      statusCheckRollup: nil,
+      forgeBlockedReason: nil
+    )
+    await store.send(.pullRequestDetailApplied(pullRequestNumber: 12, detail))
+  }
+
+  private func makeState(name: String) -> SidebarItemFeature.State {
+    SidebarItemFeature.State(
+      id: SidebarItemID("/tmp/repo/wt-\(name)"),
+      repositoryID: "/tmp/repo",
+      kind: .gitWorktree,
+      name: name,
+      branchName: name,
+      subtitle: nil,
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-\(name)"),
+      repositoryAccent: nil,
+      isMainWorktree: false,
+      isPinned: false,
+      hasMergedBadge: false
+    )
+  }
+
+  private func makeProjection(
+    surfaceIDs: [UUID] = [],
+    isProgressBusy: Bool = false,
+    hasUnseenNotifications: Bool = false,
+    notifications: IdentifiedArrayOf<WorktreeTerminalNotification> = [],
+    runningScripts: IdentifiedArrayOf<SidebarItemFeature.State.RunningScript> = [],
+    allTabsDormant: Bool = false
+  ) -> WorktreeRowProjection {
+    WorktreeRowProjection(
+      surfaceIDs: surfaceIDs,
+      isProgressBusy: isProgressBusy,
+      hasUnseenNotifications: hasUnseenNotifications,
+      notifications: notifications,
+      runningScripts: runningScripts,
+      allTabsDormant: allTabsDormant
+    )
+  }
+}

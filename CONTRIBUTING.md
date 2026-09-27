@@ -1,6 +1,6 @@
-# Contributing to Supacode
+# Contributing to Kelpie
 
-Thanks for your interest in Supacode. This project is reviewed personally, line by line,
+Thanks for your interest in Kelpie. This project is reviewed personally, line by line,
 and the bar for merging is high. A clear issue is worth more than a large pull request, so
 the process below front-loads the conversation before any code is written.
 
@@ -21,7 +21,7 @@ Contributors with write access to the repository are exempt from the automated c
 
 ## Reporting a bug
 
-Use the **Bug report** form. It asks for the Supacode version and build, your macOS version,
+Use the **Bug report** form. It asks for the Kelpie version and build, your macOS version,
 your locale, and a reliable set of reproduction steps. Those details are what make a bug
 fixable, so please fill them in. A maintainer confirms the bug and adds the `ready` label, and
 a comment lets you know. Once it is `ready`, open your fix and link it with `Closes #<number>`.
@@ -66,7 +66,7 @@ including the Xcode 26.3 requirement on macOS 26.4+.
 
 ## AI tools and accountability
 
-Supacode is built with AI assistance and you are welcome to use it too. The rule is about
+Kelpie is built with AI assistance and you are welcome to use it too. The rule is about
 accountability, not tooling:
 
 - **A human is the author of record.** The person who opens the pull request is accountable

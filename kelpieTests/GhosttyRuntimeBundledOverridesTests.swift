@@ -1,0 +1,167 @@
+import Foundation
+import KelpieSettingsShared
+import SwiftUI
+import Testing
+
+@testable import kelpie
+
+@MainActor
+struct GhosttyRuntimeBundledOverridesTests {
+  // The window tint + appearance source must track the resolved color scheme:
+  // a dark scheme yields a dark background, a light scheme a light one. Guards
+  // that the bundled themes actually differ so a missing embed hard-fails
+  // instead of passing vacuously (both sides would be `windowBackgroundColor`).
+  @Test func backgroundColorTracksColorScheme() throws {
+    let runtime = GhosttyRuntime(initialColorScheme: .light)
+    let light = runtime.backgroundColor()
+    runtime.setColorScheme(.dark)
+    let dark = runtime.backgroundColor()
+    try #require(!light.matchesTint(dark))
+    #expect(light.isLightColor)
+    #expect(!dark.isLightColor)
+    // Re-resolution works in both directions, not just the first transition.
+    runtime.setColorScheme(.light)
+    #expect(runtime.backgroundColor().isLightColor)
+  }
+
+  // The launch-flash fix: `init` seeds the resolved scheme so the FIRST
+  // `backgroundColor()` / `windowTintColor()` read (before any further
+  // `setColorScheme`) is already scheme-correct, not Ghostty's default-light
+  // resolution. Asserting with no interim `setColorScheme` also documents that
+  // the seed's config swap lands synchronously within `init`.
+  @Test func initSeedsResolvedColorSchemeBeforeFirstRead() {
+    let dark = GhosttyRuntime(initialColorScheme: .dark)
+    #expect(!dark.backgroundColor().isLightColor)
+    #expect(!dark.windowTintColor().isLightColor)
+    // With no focused-surface provider installed (the launch state),
+    // `windowTintColor()` falls through to exactly `backgroundColor()`.
+    #expect(dark.windowTintColor().matchesTint(dark.backgroundColor()))
+    let light = GhosttyRuntime(initialColorScheme: .light)
+    #expect(light.backgroundColor().isLightColor)
+    #expect(light.windowTintColor().isLightColor)
+  }
+
+  // Surface liveness is tracked by Set membership alone now that `isValid` is
+  // gone: distinct references over the same pointer stay distinct, and removing
+  // one drops exactly that reference. Uses a bogus pointer never dereferenced by
+  // the identity `==`/`hash` or `Set.remove`.
+  @Test func surfaceReferenceSetRemovesExactlyTheUnregisteredReference() {
+    let pointer = UnsafeMutableRawPointer(bitPattern: 0x1)!
+    let first = GhosttyRuntime.SurfaceReference(pointer)
+    let second = GhosttyRuntime.SurfaceReference(pointer)
+    var surfaces: Set<GhosttyRuntime.SurfaceReference> = [first, second]
+    #expect(surfaces.count == 2)
+    #expect(first != second)
+
+    surfaces.remove(first)
+    #expect(!surfaces.contains(first))
+    #expect(surfaces.contains(second))
+  }
+
+  /// Shell integration must NOT be disabled in the bundled overrides: surfaces
+  /// run the real shell with zmx injected as a `command-wrapper`, so Ghostty
+  /// integrates the shell exactly as without zmx. Forcing `none` here would
+  /// regress OSC 7 cwd reporting (the whole point of the wrapper approach).
+  @Test func bundledOverridesDoNotTouchShellIntegration() {
+    #expect(!GhosttyRuntime.bundledOverridesString.contains("shell-integration"))
+  }
+
+  @Test func appOwnedOverridesKeepSurfaceCloseDetectionEnabled() {
+    // The close-safety predicate is app-owned, so it lives in the final tier,
+    // not the cosmetic defaults.
+    #expect(GhosttyRuntime.appOwnedOverridesString.contains("confirm-close-surface = true"))
+    #expect(!GhosttyRuntime.bundledOverridesString.contains("confirm-close-surface"))
+  }
+
+  @Test func appOwnedOverridesDisableGhosttyFocusFollowsMouse() {
+    // Kelpie's `hoverFocusMode` is the single hover-focus authority, so the
+    // native Ghostty path is unbound in the final tier and cannot resurrect it.
+    #expect(GhosttyRuntime.appOwnedOverridesString.contains("focus-follows-mouse = false"))
+    #expect(!GhosttyRuntime.bundledOverridesString.contains("focus-follows-mouse"))
+  }
+
+  @Test func appOwnedOverridesUnbindGhosttySearchChords() {
+    // Search is app-owned (the Find menu), so Ghostty's default search chords are
+    // released unconditionally here, not just via customizable `AppShortcuts`, so
+    // disabling or rebinding a Find shortcut can't leave Ghostty driving search.
+    // Escape stays bound so it still cancels a search and reaches TUIs.
+    let overrides = GhosttyRuntime.appOwnedOverridesString
+    #expect(overrides.contains("keybind = super+f=unbind"))
+    #expect(overrides.contains("keybind = super+e=unbind"))
+    #expect(overrides.contains("keybind = super+g=unbind"))
+    #expect(overrides.contains("keybind = super+shift+g=unbind"))
+    #expect(overrides.contains("keybind = super+shift+f=unbind"))
+  }
+
+  @Test func configResolutionMergeLoadsBothTiers() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, kelpieUserConfigExists: true)
+    #expect(plan.loadUserDefaultFiles)
+    #expect(plan.loadKelpieUserConfig)
+  }
+
+  @Test func configResolutionMergeWithoutFileLoadsOnlyDefaults() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, kelpieUserConfigExists: false)
+    #expect(plan.loadUserDefaultFiles)
+    #expect(!plan.loadKelpieUserConfig)
+  }
+
+  @Test func configResolutionExclusiveSuppressesDefaultsWhenFilePresent() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .exclusive, kelpieUserConfigExists: true)
+    #expect(!plan.loadUserDefaultFiles)
+    #expect(plan.loadKelpieUserConfig)
+  }
+
+  // Exclusive with no Kelpie file must still load the standard config: booting
+  // the terminal with no user config at all is worse than ignoring the mode.
+  @Test func configResolutionExclusiveFallsBackWhenFileMissing() {
+    let plan = GhosttyRuntime.ConfigResolution.plan(mode: .exclusive, kelpieUserConfigExists: false)
+    #expect(plan.loadUserDefaultFiles)
+    #expect(!plan.loadKelpieUserConfig)
+  }
+
+  /// Each line in the heredoc is parsed as a Ghostty `key = value` directive
+  /// by `ghostty_config_load_file`. Catches accidental free-form text edits.
+  @Test func bundledOverridesAreKeyValueDirectives() {
+    let lines = GhosttyRuntime.bundledOverridesString
+      .split(whereSeparator: \.isNewline)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
+    #expect(!lines.isEmpty)
+    for line in lines {
+      #expect(line.contains("="), "Override line missing `=`: \(line)")
+    }
+  }
+
+  /// `TERM_PROGRAM` reports Kelpie with its version (issue #440).
+  @Test func terminalProgramOverridesIdentifyKelpie() {
+    let overrides = GhosttyRuntime.terminalProgramOverrides(version: "1.2.3")
+    #expect(overrides.contains("env = TERM_PROGRAM=kelpie"))
+    #expect(overrides.contains("env = TERM_PROGRAM_VERSION=1.2.3"))
+  }
+
+  /// A missing or blank version still emits a placeholder, never Ghostty's.
+  @Test func terminalProgramOverridesFallBackWhenVersionUnavailable() {
+    for version: String? in [nil, "", "   "] {
+      let overrides = GhosttyRuntime.terminalProgramOverrides(version: version)
+      #expect(overrides.contains("env = TERM_PROGRAM=kelpie"))
+      #expect(overrides.contains("env = TERM_PROGRAM_VERSION=unknown"))
+    }
+  }
+
+  /// Surrounding whitespace is trimmed from the emitted version.
+  @Test func terminalProgramOverridesTrimVersionWhitespace() {
+    let overrides = GhosttyRuntime.terminalProgramOverrides(version: " 1.2.3 ")
+    #expect(overrides.contains("env = TERM_PROGRAM_VERSION=1.2.3"))
+  }
+
+  @Test func terminalProgramOverridesAreKeyValueDirectives() {
+    let lines = GhosttyRuntime.terminalProgramOverrides(version: "9.9.9")
+      .split(whereSeparator: \.isNewline)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
+    #expect(!lines.isEmpty)
+    for line in lines {
+      #expect(line.contains("="), "Override line missing `=`: \(line)")
+    }
+  }
+}

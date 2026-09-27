@@ -14,7 +14,7 @@ body:
     id: problem
     attributes:
       label: What problem does this solve?
-      description: Describe the motivation. What are you trying to do that Supacode makes hard or impossible today?
+      description: Describe the motivation. What are you trying to do that Kelpie makes hard or impossible today?
       placeholder: I'm always frustrated when ...
     validations:
       required: true
@@ -35,7 +35,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Supacode version
+      label: Kelpie version
       description: "Optional. The version you are on, if relevant to the request."
       placeholder: 0.10.5
     validations:
@@ -57,5 +57,5 @@ body:
           required: true
         - label: I understand feature pull requests are closed until the issue is marked `ready`.
           required: true
-        - label: I agree to follow this project's [Code of Conduct](https://github.com/supabitapp/supacode/blob/main/CODE_OF_CONDUCT.md).
+        - label: I agree to follow this project's [Code of Conduct](https://github.com/ObserverMoment/kelpie/blob/main/CODE_OF_CONDUCT.md).
           required: true

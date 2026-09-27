@@ -1,16 +1,16 @@
 strict: true
 
 included:
-  - supacode
-  - supacode-cli
-  - supacodeTests
-  - SupacodeSettingsShared
-  - SupacodeSettingsFeature
+  - kelpie
+  - kelpie-cli
+  - kelpieTests
+  - KelpieSettingsShared
+  - KelpieSettingsFeature
 excluded:
   - ThirdParty/ghostty
   # Skill content contains long markdown lines inside multiline strings.
-  - supacode/Features/Settings/BusinessLogic/CLISkillContent.swift
-  - SupacodeSettingsShared/BusinessLogic/CLISkillContent.swift
+  - kelpie/Features/Settings/BusinessLogic/CLISkillContent.swift
+  - KelpieSettingsShared/BusinessLogic/CLISkillContent.swift
 
 disabled_rules:
   - file_length
@@ -57,7 +57,7 @@ custom_rules:
     regex: "\\bstore\\.[A-Za-z0-9_]+\\s*(?:\\+=|-=|\\*=|/=|=(?!=))"
     message: "Do not mutate store state directly in views. Send actions instead."
     severity: error
-    included: "supacode/.*/Views/.*\\.swift"
+    included: "kelpie/.*/Views/.*\\.swift"
   # Two signals, both required: the declaration is indented into a body (4+
   # spaces, since even a nested view struct's own members sit at 4), and it
   # carries no access modifier (Swift forbids one on a local, so a `private`

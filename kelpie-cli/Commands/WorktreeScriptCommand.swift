@@ -1,0 +1,39 @@
+import ArgumentParser
+import Foundation
+
+/// `kelpie worktree script` — inspect user-defined scripts for a worktree.
+/// Lives at the top level (not nested in `WorktreeCommand`) so SwiftLint's
+/// `nesting` rule stays satisfied while still appearing as a `worktree`
+/// subcommand at runtime via its `commandName`.
+struct WorktreeScriptCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "script",
+    abstract: "Inspect user-defined scripts for a worktree.",
+    subcommands: [List.self],
+    defaultSubcommand: List.self
+  )
+}
+
+extension WorktreeScriptCommand {
+  struct List: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "List scripts configured for a worktree.")
+
+    @Option(name: [.short, .long], help: "Worktree ID. Defaults to $KELPIE_WORKTREE_ID.")
+    var worktree: String?
+
+    @OptionGroup var timeoutOption: TimeoutOption
+
+    func run() throws {
+      let id = try IDResolvers.resolveWorktreeID(worktree)
+      let items = try QueryDispatcher.query(
+        resource: "scripts",
+        params: ["worktreeID": id],
+        timeoutSeconds: timeoutOption.timeout
+      )
+      for item in items {
+        let running = !(item["running"] ?? "").isEmpty
+        print(ListFormatting.scriptLine(item, running: running))
+      }
+    }
+  }
+}

@@ -25,7 +25,7 @@ fail() {
   printf '      fix: %s\n' "$2" >&2
 }
 
-[ "${quiet}" -eq 1 ] || printf '\033[1msupacode doctor\033[0m\n'
+[ "${quiet}" -eq 1 ] || printf '\033[1mkelpie doctor\033[0m\n'
 
 # 1. mise on PATH
 if command -v mise >/dev/null 2>&1; then

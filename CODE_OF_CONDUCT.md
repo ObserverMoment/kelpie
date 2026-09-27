@@ -2,7 +2,7 @@
 
 ## Our pledge
 
-We as members, contributors, and leaders pledge to make participation in the Supacode
+We as members, contributors, and leaders pledge to make participation in the Kelpie
 community a harassment-free experience for everyone, regardless of age, body size, visible or
 invisible disability, ethnicity, sex characteristics, gender identity and expression, level of
 experience, education, socio-economic status, nationality, personal appearance, race, caste,
@@ -13,7 +13,7 @@ inclusive, and healthy community.
 
 ## Accountability is to humans
 
-Supacode is built with AI assistance, and contributors are welcome to use AI tools. This Code
+Kelpie is built with AI assistance, and contributors are welcome to use AI tools. This Code
 of Conduct governs the conduct of **people**. Every contribution is the responsibility of a
 human: the person who submits it is accountable for it, must be able to explain and stand
 behind it, and answers for it in review and in this community. An AI agent is a tool, not a
@@ -60,7 +60,7 @@ is officially representing the community in public spaces.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the
 maintainers privately through GitHub's
-[private security advisory form](https://github.com/supabitapp/supacode/security/advisories/new).
+[private security advisory form](https://github.com/ObserverMoment/kelpie/security/advisories/new).
 All complaints will be reviewed and investigated promptly and fairly. All community leaders
 are obligated to respect the privacy and security of the reporter of any incident.
 

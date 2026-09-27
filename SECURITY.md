@@ -5,7 +5,7 @@
 Please report security vulnerabilities **privately**, never in a public issue or pull request.
 
 Use GitHub's private reporting form:
-[Report a vulnerability](https://github.com/supabitapp/supacode/security/advisories/new).
+[Report a vulnerability](https://github.com/ObserverMoment/kelpie/security/advisories/new).
 
 Include enough detail to reproduce the issue: the affected version and build, your macOS
 version, the steps to trigger it, and the impact as you understand it. You will get an
@@ -15,5 +15,5 @@ Please give us a reasonable window to release a fix before any public disclosure
 
 ## Supported versions
 
-Supacode ships from `main` and updates through the in-app updater. Security fixes target the
+Kelpie ships from `main` and updates through the in-app updater. Security fixes target the
 latest released version, so please make sure you are on the latest build before reporting.

@@ -1,0 +1,1074 @@
+import AppKit
+import GhosttyKit
+import Sharing
+import KelpieSettingsShared
+import SwiftUI
+import UniformTypeIdentifiers
+
+final class GhosttyRuntime {
+  private static let logger = KelpieLogger("Ghostty")
+
+  /// Live-pointer registries for C callbacks. A queued main-queue callback can
+  /// fire after the raw pointer it names was freed, so dereferencing it would be
+  /// use-after-free; the deferred handler validates membership first. App and
+  /// userdata are registered in init and removed in deinit; surfaces are
+  /// registered on `registerSurface` and removed on `unregisterSurface`, which
+  /// `closeSurface` calls synchronously before the deferred
+  /// `ghostty_surface_free`, so a background-thread action queued around the
+  /// close is dropped instead of hitting freed memory.
+  private static var liveUserdataBits: Set<UInt> = []
+  private static var liveAppBits: Set<UInt> = []
+  private static var liveSurfaceBits: Set<UInt> = []
+
+  final class SurfaceReference: Hashable {
+    let surface: ghostty_surface_t
+
+    init(_ surface: ghostty_surface_t) {
+      self.surface = surface
+    }
+
+    static func == (lhs: SurfaceReference, rhs: SurfaceReference) -> Bool {
+      lhs === rhs
+    }
+
+    func hash(into hasher: inout Hasher) {
+      hasher.combine(ObjectIdentifier(self))
+    }
+  }
+
+  private var config: ghostty_config_t?
+  private(set) var app: ghostty_app_t?
+  private var observers: [NSObjectProtocol] = []
+  private var surfaceRefs: Set<SurfaceReference> = []
+  private var lastColorScheme: ghostty_color_scheme_e?
+  /// Whether the user has toggled background opacity to force
+  /// an opaque window, overriding the configured transparency.
+  private(set) var isBackgroundOpaque = false
+  /// User's intended `background-opacity` from their Ghostty config, used to
+  /// tint the translucent window chrome behind the surfaces.
+  private var userBackgroundOpacity: Double = 1
+
+  func toggleIsBackgroundOpaque() {
+    isBackgroundOpaque.toggle()
+  }
+  var onConfigChange: (() -> Void)?
+
+  init(initialColorScheme: ColorScheme? = nil) {
+    guard let loaded = Self.loadConfig() else {
+      preconditionFailure("ghostty_config_new failed")
+    }
+    self.config = loaded.config
+    self.userBackgroundOpacity = loaded.userBackgroundOpacity
+    let config = loaded.config
+
+    var runtimeConfig = ghostty_runtime_config_s(
+      userdata: Unmanaged.passUnretained(self).toOpaque(),
+      supports_selection_clipboard: true,
+      wakeup_cb: { @Sendable userdata in
+        GhosttyRuntime.wakeupCallback(userdata)
+      },
+      action_cb: { @Sendable app, target, action in
+        GhosttyRuntime.actionCallback(app, target, action)
+      },
+      read_clipboard_cb: { @Sendable userdata, location, state in
+        GhosttyRuntime.readClipboardCallback(userdata, location, state)
+      },
+      confirm_read_clipboard_cb: { @Sendable userdata, string, state, request in
+        GhosttyRuntime.confirmReadClipboardCallback(userdata, string, state, request)
+      },
+      write_clipboard_cb: { @Sendable userdata, location, content, len, confirm in
+        GhosttyRuntime.writeClipboardCallback(userdata, location, content, len, confirm)
+      },
+      close_surface_cb: { @Sendable userdata, processAlive in
+        GhosttyRuntime.closeSurfaceCallback(userdata, processAlive)
+      }
+    )
+
+    guard let app = ghostty_app_new(&runtimeConfig, config) else {
+      preconditionFailure("ghostty_app_new failed")
+    }
+    self.app = app
+    Self.liveUserdataBits.insert(UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
+    Self.liveAppBits.insert(UInt(bitPattern: app))
+
+    let center = NotificationCenter.default
+    observers.append(
+      center.addObserver(
+        forName: NSApplication.didBecomeActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          self?.setAppFocus(true)
+        }
+      })
+    observers.append(
+      center.addObserver(
+        forName: NSApplication.didResignActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          self?.setAppFocus(false)
+        }
+      })
+    observers.append(
+      center.addObserver(
+        forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          guard let app = self?.app else { return }
+          ghostty_app_keyboard_changed(app)
+        }
+      })
+
+    // Seed the resolved scheme so `backgroundColor()` (the window tint +
+    // appearance source) reads the user's real light/dark theme before the
+    // first paint, not Ghostty's default-light resolution.
+    setColorScheme(initialColorScheme ?? Self.resolvedLaunchColorScheme())
+  }
+
+  isolated deinit {
+    Self.liveUserdataBits.remove(UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
+    let center = NotificationCenter.default
+    for observer in observers {
+      center.removeObserver(observer)
+    }
+    if let app {
+      Self.liveAppBits.remove(UInt(bitPattern: app))
+      ghostty_app_free(app)
+    }
+    if let config {
+      ghostty_config_free(config)
+    }
+  }
+
+  func setAppFocus(_ focused: Bool) {
+    if let app {
+      ghostty_app_set_focus(app, focused)
+    }
+  }
+
+  func tick() {
+    if let app {
+      ghostty_app_tick(app)
+    }
+  }
+
+  // The user's appearance preference resolved against the live system scheme,
+  // used to seed Ghostty's theme conditional before the first paint.
+  private static func resolvedLaunchColorScheme() -> ColorScheme {
+    @Shared(.settingsFile) var settingsFile
+    return settingsFile.global.appearanceMode.resolved(systemColorScheme: systemColorScheme())
+  }
+
+  // Read the system appearance without `NSApp`, which is still nil while the
+  // runtime is built during `KelpieApp.init`. `GhosttyColorSchemeSyncView`
+  // later reconciles against `NSApp.effectiveAppearance` (a no-op when equal),
+  // so this only needs to be right for the first paint.
+  private static func systemColorScheme() -> ColorScheme {
+    UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" ? .dark : .light
+  }
+
+  func setColorScheme(_ scheme: ColorScheme) {
+    guard let app else { return }
+    let ghosttyScheme: ghostty_color_scheme_e =
+      scheme == .dark
+      ? GHOSTTY_COLOR_SCHEME_DARK
+      : GHOSTTY_COLOR_SCHEME_LIGHT
+    lastColorScheme = ghosttyScheme
+    ghostty_app_set_color_scheme(app, ghosttyScheme)
+    applyColorSchemeToSurfaces(ghosttyScheme)
+    // Tell window-chrome observers so the no-surface tint repaints when the
+    // user has `theme = light:..,dark:..` and the system flips Light/Dark.
+    notifyConfigChanged()
+  }
+
+  func registerSurface(_ surface: ghostty_surface_t) -> SurfaceReference {
+    let ref = SurfaceReference(surface)
+    surfaceRefs.insert(ref)
+    Self.liveSurfaceBits.insert(UInt(bitPattern: surface))
+    if let lastColorScheme {
+      ghostty_surface_set_color_scheme(surface, lastColorScheme)
+    }
+    return ref
+  }
+
+  func unregisterSurface(_ ref: SurfaceReference) {
+    surfaceRefs.remove(ref)
+    Self.liveSurfaceBits.remove(UInt(bitPattern: ref.surface))
+  }
+
+  /// Reloads the full app config from disk and re-applies the current color scheme.
+  func reloadAppConfig() {
+    guard let app else {
+      Self.logger.warning("Cannot reload app config: Ghostty app instance is nil.")
+      return
+    }
+    var target = ghostty_target_s()
+    target.tag = GHOSTTY_TARGET_APP
+    guard let loaded = Self.loadConfig() else {
+      Self.logger.warning("Failed to reload app config.")
+      return
+    }
+    // Reset only once the reload is certain, so a failed load stays a no-op.
+    isBackgroundOpaque = false
+    userBackgroundOpacity = loaded.userBackgroundOpacity
+    applyConfig(loaded.config, target: target, app: app)
+    ghostty_config_free(loaded.config)
+    if let lastColorScheme {
+      ghostty_app_set_color_scheme(app, lastColorScheme)
+      applyColorSchemeToSurfaces(lastColorScheme)
+    }
+    notifyConfigChanged()
+  }
+
+  func reloadConfig(soft: Bool, target: ghostty_target_s) {
+    guard let app else { return }
+    if soft, let config {
+      guard let clone = ghostty_config_clone(config) else { return }
+      applyConfig(clone, target: target, app: app)
+      ghostty_config_free(clone)
+      // Soft reload reuses the in-memory config (already overridden), so we
+      // re-snapshot the user's `background-opacity` from disk to keep the
+      // window tint in lockstep with what the user actually has configured.
+      if let snapshot = Self.loadConfig() {
+        userBackgroundOpacity = snapshot.userBackgroundOpacity
+        ghostty_config_free(snapshot.config)
+      }
+      notifyConfigChanged()
+      return
+    }
+    guard let loaded = Self.loadConfig() else { return }
+    userBackgroundOpacity = loaded.userBackgroundOpacity
+    applyConfig(loaded.config, target: target, app: app)
+    ghostty_config_free(loaded.config)
+    notifyConfigChanged()
+  }
+
+  fileprivate func notifyConfigChanged() {
+    onConfigChange?()
+    NotificationCenter.default.post(name: .ghosttyRuntimeConfigDidChange, object: self)
+  }
+
+  private func applyConfig(
+    _ config: ghostty_config_t,
+    target: ghostty_target_s,
+    app: ghostty_app_t
+  ) {
+    switch target.tag {
+    case GHOSTTY_TARGET_APP:
+      ghostty_app_update_config(app, config)
+    case GHOSTTY_TARGET_SURFACE:
+      guard let surface = target.target.surface else { return }
+      ghostty_surface_update_config(surface, config)
+    default:
+      return
+    }
+  }
+
+  private func applyColorSchemeToSurfaces(_ scheme: ghostty_color_scheme_e) {
+    for ref in surfaceRefs {
+      ghostty_surface_set_color_scheme(ref.surface, scheme)
+    }
+  }
+
+  private static func runtime(from userdata: UnsafeMutableRawPointer?) -> GhosttyRuntime? {
+    guard let userdata, liveUserdataBits.contains(UInt(bitPattern: userdata)) else { return nil }
+    return Unmanaged<GhosttyRuntime>.fromOpaque(userdata).takeUnretainedValue()
+  }
+
+  private static func runtime(fromApp app: ghostty_app_t) -> GhosttyRuntime? {
+    guard let userdata = ghostty_app_userdata(app) else { return nil }
+    return runtime(from: userdata)
+  }
+
+  private static func surfaceBridge(fromUserdata userdata: UnsafeMutableRawPointer?)
+    -> GhosttySurfaceBridge?
+  {
+    guard let userdata else { return nil }
+    return Unmanaged<GhosttySurfaceBridge>.fromOpaque(userdata).takeUnretainedValue()
+  }
+
+  private static func surfaceBridge(fromSurface surface: ghostty_surface_t?)
+    -> GhosttySurfaceBridge?
+  {
+    guard let surface, let userdata = ghostty_surface_userdata(surface) else { return nil }
+    return Unmanaged<GhosttySurfaceBridge>.fromOpaque(userdata).takeUnretainedValue()
+  }
+
+  private nonisolated static func wakeupCallback(_ userdata: UnsafeMutableRawPointer?) {
+    let userdataBits = userdata.map { UInt(bitPattern: $0) }
+    if Thread.isMainThread {
+      MainActor.assumeIsolated {
+        wakeup(userdataBits: userdataBits)
+      }
+      return
+    }
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        wakeup(userdataBits: userdataBits)
+      }
+    }
+  }
+
+  private nonisolated static func actionCallback(
+    _ app: ghostty_app_t?,
+    _ target: ghostty_target_s,
+    _ action: ghostty_action_s
+  ) -> Bool {
+    guard let app else { return false }
+    let appBits = UInt(bitPattern: app)
+    if Thread.isMainThread {
+      // Synchronous: the caller is driving this surface right now (e.g. its
+      // creation, which emits the initial cell-size/title before the surface is
+      // registered), so it is live by construction.
+      return MainActor.assumeIsolated {
+        handleAction(appBits: appBits, target: target, action: action)
+      }
+    }
+    // A background surface thread can emit an action just before, or during, the
+    // surface's deferred free; capture its identity so the main-actor block can
+    // drop it if the surface was unregistered (closing/freed) in the meantime,
+    // rather than dereferencing a pointer that is about to be, or already is,
+    // freed.
+    let surfaceBits =
+      target.tag == GHOSTTY_TARGET_SURFACE
+      ? target.target.surface.map { UInt(bitPattern: $0) }
+      : nil
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        if let surfaceBits, !liveSurfaceBits.contains(surfaceBits) { return }
+        _ = handleAction(appBits: appBits, target: target, action: action)
+      }
+    }
+    return false
+  }
+
+  private nonisolated static func readClipboardCallback(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ location: ghostty_clipboard_e,
+    _ state: UnsafeMutableRawPointer?
+  ) -> Bool {
+    let userdataBits = userdata.map { UInt(bitPattern: $0) }
+    let stateBits = state.map { UInt(bitPattern: $0) }
+    if Thread.isMainThread {
+      return MainActor.assumeIsolated {
+        readClipboard(userdataBits: userdataBits, location: location, stateBits: stateBits)
+      }
+    }
+    return DispatchQueue.main.sync {
+      MainActor.assumeIsolated {
+        readClipboard(userdataBits: userdataBits, location: location, stateBits: stateBits)
+      }
+    }
+  }
+
+  private nonisolated static func confirmReadClipboardCallback(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ string: UnsafePointer<CChar>?,
+    _ state: UnsafeMutableRawPointer?,
+    _ request: ghostty_clipboard_request_e
+  ) {
+    guard let string else { return }
+    let value = String(cString: string)
+    let userdataBits = userdata.map { UInt(bitPattern: $0) }
+    let stateBits = state.map { UInt(bitPattern: $0) }
+    if Thread.isMainThread {
+      MainActor.assumeIsolated {
+        confirmReadClipboard(
+          userdataBits: userdataBits,
+          value: value,
+          stateBits: stateBits,
+          request: request
+        )
+      }
+      return
+    }
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        confirmReadClipboard(
+          userdataBits: userdataBits,
+          value: value,
+          stateBits: stateBits,
+          request: request
+        )
+      }
+    }
+  }
+
+  private nonisolated static func writeClipboardCallback(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ location: ghostty_clipboard_e,
+    _ content: UnsafePointer<ghostty_clipboard_content_s>?,
+    _ len: Int,
+    _ confirm: Bool
+  ) {
+    _ = userdata
+    guard let content, len > 0 else { return }
+    let items: [(mime: String, data: String)] = (0..<len).compactMap { index in
+      let item = content.advanced(by: index).pointee
+      guard let mimePtr = item.mime, let dataPtr = item.data else { return nil }
+      return (mime: String(cString: mimePtr), data: String(cString: dataPtr))
+    }
+    guard !items.isEmpty else { return }
+    if Thread.isMainThread {
+      MainActor.assumeIsolated {
+        writeClipboard(
+          location: location,
+          items: items,
+          confirm: confirm
+        )
+      }
+      return
+    }
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        writeClipboard(
+          location: location,
+          items: items,
+          confirm: confirm
+        )
+      }
+    }
+  }
+
+  private nonisolated static func closeSurfaceCallback(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ processAlive: Bool
+  ) {
+    let userdataBits = userdata.map { UInt(bitPattern: $0) }
+    if Thread.isMainThread {
+      MainActor.assumeIsolated {
+        closeSurface(userdataBits: userdataBits, processAlive: processAlive)
+      }
+      return
+    }
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        closeSurface(userdataBits: userdataBits, processAlive: processAlive)
+      }
+    }
+  }
+
+  private static func wakeup(userdataBits: UInt?) {
+    let userdata = userdataBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
+    guard let runtime = runtime(from: userdata) else { return }
+    runtime.tick()
+  }
+
+  private static func handleAction(
+    appBits: UInt,
+    target: ghostty_target_s,
+    action: ghostty_action_s
+  ) -> Bool {
+    guard liveAppBits.contains(appBits), let app = ghostty_app_t(bitPattern: appBits) else { return false }
+    if let runtime = runtime(fromApp: app) {
+      if action.tag == GHOSTTY_ACTION_CONFIG_CHANGE, target.tag == GHOSTTY_TARGET_APP {
+        let config = action.action.config_change.config
+        guard let clone = ghostty_config_clone(config) else { return false }
+        runtime.setConfig(clone)
+        // Re-snapshot the user's `background-opacity` from disk: the incoming
+        // config may already carry our `loadBundledOverrides` overlay, so
+        // reading it from the clone would return the override (0) instead of
+        // the user's intended value.
+        if let snapshot = Self.loadConfig() {
+          runtime.userBackgroundOpacity = snapshot.userBackgroundOpacity
+          ghostty_config_free(snapshot.config)
+        }
+        runtime.notifyConfigChanged()
+      }
+      if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG {
+        let soft = action.action.reload_config.soft
+        runtime.reloadConfig(soft: soft, target: target)
+      }
+    }
+    guard target.tag == GHOSTTY_TARGET_SURFACE else { return false }
+    guard let surface = target.target.surface else { return false }
+    guard let bridge = surfaceBridge(fromSurface: surface) else { return false }
+    return bridge.handleAction(target: target, action: action)
+  }
+
+  private static func readClipboard(
+    userdataBits: UInt?,
+    location: ghostty_clipboard_e,
+    stateBits: UInt?
+  ) -> Bool {
+    let userdata = userdataBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
+    let state = stateBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
+    guard let bridge = surfaceBridge(fromUserdata: userdata), let surface = bridge.surface else {
+      return false
+    }
+    guard let value = NSPasteboard.ghostty(location)?.getOpinionatedStringContents() else {
+      return false
+    }
+    value.withCString { ptr in
+      ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+    }
+    return true
+  }
+
+  private static func confirmReadClipboard(
+    userdataBits: UInt?,
+    value: String,
+    stateBits: UInt?,
+    request: ghostty_clipboard_request_e
+  ) {
+    _ = request
+    let userdata = userdataBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
+    let state = stateBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
+    guard let bridge = surfaceBridge(fromUserdata: userdata), let surface = bridge.surface else {
+      return
+    }
+    value.withCString { ptr in
+      ghostty_surface_complete_clipboard_request(surface, ptr, state, true)
+    }
+  }
+
+  private static func writeClipboard(
+    location: ghostty_clipboard_e,
+    items: [(mime: String, data: String)],
+    confirm: Bool
+  ) {
+    _ = confirm
+
+    guard let pasteboard = NSPasteboard.ghostty(location) else { return }
+    let types = items.compactMap { NSPasteboard.PasteboardType(mimeType: $0.mime) }
+    pasteboard.declareTypes(types, owner: nil)
+    for item in items {
+      guard let type = NSPasteboard.PasteboardType(mimeType: item.mime) else { continue }
+      pasteboard.setString(item.data, forType: type)
+    }
+  }
+
+  private static func closeSurface(userdataBits: UInt?, processAlive: Bool) {
+    let userdata = userdataBits.flatMap { UnsafeMutableRawPointer(bitPattern: $0) }
+    guard let bridge = surfaceBridge(fromUserdata: userdata) else { return }
+    bridge.closeSurface(processAlive: processAlive)
+  }
+
+  private func setConfig(_ config: ghostty_config_t) {
+    if let existing = self.config {
+      ghostty_config_free(existing)
+    }
+    self.config = config
+  }
+
+  /// Pure decision for how the user-authored config tiers compose, given the
+  /// mode and whether `~/.kelpie/ghostty.config` has content. Kept free of
+  /// GhosttyKit so the (mode x file-exists) matrix is unit-testable.
+  enum ConfigResolution {
+    struct Plan: Equatable {
+      /// Load the standard Ghostty config (default + recursive files).
+      var loadUserDefaultFiles: Bool
+      /// Layer `~/.kelpie/ghostty.config` on top as the final tier.
+      var loadKelpieUserConfig: Bool
+    }
+
+    static func plan(mode: GhosttyUserConfigMode, kelpieUserConfigExists: Bool) -> Plan {
+      // Exclusive only suppresses the standard config when there is actually a
+      // Kelpie config to read instead; otherwise fall back to loading it so
+      // the terminal is never left with no user config at all.
+      let suppressesDefaults = mode == .exclusive && kelpieUserConfigExists
+      return Plan(
+        loadUserDefaultFiles: !suppressesDefaults,
+        loadKelpieUserConfig: kelpieUserConfigExists
+      )
+    }
+  }
+
+  private static func loadConfig() -> (config: ghostty_config_t, userBackgroundOpacity: Double)? {
+    @Shared(.settingsFile) var settingsFile
+    let themeSyncEnabled = settingsFile.global.terminalThemeSyncEnabled
+    let kelpieUserConfigURL = KelpiePaths.ghosttyUserConfigURL
+    let plan = ConfigResolution.plan(
+      mode: settingsFile.global.ghosttyUserConfigMode,
+      kelpieUserConfigExists: KelpiePaths.ghosttyUserConfigHasContent()
+    )
+    guard let config = ghostty_config_new() else {
+      logger.error("ghostty_config_new returned nil; config load aborted.")
+      return nil
+    }
+    // Tier 1: the user's standard Ghostty config, unless exclusive mode suppresses it.
+    if plan.loadUserDefaultFiles {
+      ghostty_config_load_default_files(config)
+      ghostty_config_load_recursive_files(config)
+    }
+    // CLI args are process args, not a config file, so they are orthogonal to the
+    // suppression above (and inert on macOS); always apply them.
+    ghostty_config_load_cli_args(config)
+    // Snapshot the user's opacity from a clone before the overlay clobbers it,
+    // mirroring the user tiers so the tint matches the active mode.
+    let userOpacity: Double
+    if let userView = ghostty_config_clone(config) {
+      loadBundledTheme(into: userView, enabled: themeSyncEnabled)
+      if plan.loadKelpieUserConfig {
+        loadUserFile(at: kelpieUserConfigURL, into: userView)
+      }
+      ghostty_config_finalize(userView)
+      userOpacity = readBackgroundOpacity(from: userView)
+      ghostty_config_free(userView)
+    } else {
+      userOpacity = 1
+    }
+    // Tier 2: the always-applied Kelpie overlay (theme, then cosmetic
+    // overrides). The user's config may override these.
+    loadBundledTheme(into: config, enabled: themeSyncEnabled)
+    loadBundledOverrides(into: config)
+    // Tier 3: the user-authored Kelpie config, layered on top so it overrides.
+    // Its `config-file` includes are not followed: re-running the recursive pass
+    // here would re-apply tier-1 includes on top and invert precedence.
+    if plan.loadKelpieUserConfig {
+      loadUserFile(at: kelpieUserConfigURL, into: config)
+    }
+    // Tier 4: app-owned overrides, always last so nothing can override them.
+    loadAppOwnedOverrides(into: config, shortcutOverrides: settingsFile.global.shortcutOverrides)
+    ghostty_config_finalize(config)
+    logDiagnostics(of: config)
+    return (config, userOpacity)
+  }
+
+  private static func loadUserFile(at url: URL, into config: ghostty_config_t) {
+    url.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  /// The path Ghostty resolves for the user's standard config file (what the
+  /// `open_config` action edits). May name a file that does not exist yet.
+  static var standardConfigFilePath: String? {
+    let string = ghostty_config_open_path()
+    defer { ghostty_string_free(string) }
+    guard let ptr = string.ptr, string.len > 0 else { return nil }
+    let buffer = UnsafeRawBufferPointer(start: ptr, count: Int(string.len))
+    guard let path = String(bytes: buffer, encoding: .utf8), !path.isEmpty else { return nil }
+    return path
+  }
+
+  private static func readBackgroundOpacity(from config: ghostty_config_t) -> Double {
+    var value: Double = 1
+    let key = "background-opacity"
+    _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+    return min(max(value, 0), 1)
+  }
+
+  /// Cosmetic Kelpie defaults loaded in the middle tier; the user's own
+  /// Kelpie config may override these.
+  ///
+  /// No `background-opacity` override: surfaces render translucent at the
+  /// theme's opacity and keep their own OSC 11 color. The window tint behind
+  /// them is masked out by `WindowTintBackdrop` so a surface composites over
+  /// blur, not the tint (no double background).
+  ///
+  /// Shell integration is intentionally left untouched (no `shell-integration`
+  /// override): surfaces run the real shell with zmx injected as a Ghostty
+  /// `command-wrapper`, so Ghostty resolves and integrates the shell exactly as
+  /// it would without zmx, honoring the user's `command` / `shell-integration`.
+  internal static let bundledOverridesString = """
+    window-padding-x = 14
+    window-padding-y = 12,0
+    """
+
+  /// Behavioral overrides that must survive the user's Kelpie config, so they
+  /// load last. Keeping Ghostty's close predicate enabled lets
+  /// `confirmCloseSurface` decide whether Kelpie prompts. Forcing
+  /// `focus-follows-mouse` off hands hover-focus to Kelpie's `hoverFocusMode`,
+  /// so the layout is the single authority and `.never` truly disables it. Search
+  /// is owned app-side (the Find menu), so Ghostty's default search chords are
+  /// unbound unconditionally here, not just via the customizable `AppShortcuts`,
+  /// so disabling or rebinding a Find shortcut can't leave Ghostty driving it.
+  /// Escape is left bound so it still cancels a search and reaches full-screen TUIs.
+  internal static let appOwnedOverridesString = """
+    confirm-close-surface = true
+    focus-follows-mouse = false
+    keybind = super+f=unbind
+    keybind = super+e=unbind
+    keybind = super+g=unbind
+    keybind = super+shift+g=unbind
+    keybind = super+shift+f=unbind
+    """
+
+  /// Reports Kelpie in `TERM_PROGRAM` so programs detect the real host
+  /// terminal (issue #440); loaded after the user config so it wins. The version
+  /// is always emitted because Ghostty's `env` map can override a key but not
+  /// clear its seeded version, so a blank value falls back to a placeholder.
+  internal static func terminalProgramOverrides(version: String?) -> String {
+    // Trim like Ghostty's `env` parser, which strips whitespace then drops a
+    // now-empty value, leaving its seeded version.
+    let trimmed = version?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolved = trimmed.flatMap { $0.isEmpty ? nil : $0 } ?? "unknown"
+    return """
+      env = TERM_PROGRAM=kelpie
+      env = TERM_PROGRAM_VERSION=\(resolved)
+      """
+  }
+
+  private static var appVersion: String? {
+    let info = Bundle.main.infoDictionary
+    let candidates = [info?["CFBundleShortVersionString"], info?["CFBundleVersion"]]
+    return candidates.lazy.compactMap { $0 as? String }.first { !$0.isEmpty }
+  }
+
+  private static func loadBundledOverrides(into config: ghostty_config_t) {
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("kelpie-defaults.conf")
+    do {
+      try bundledOverridesString.write(to: tempURL, atomically: true, encoding: .utf8)
+    } catch {
+      logger.error(
+        "Bundled overrides not delivered; the terminal loses its cosmetic defaults: \(error.localizedDescription)")
+      return
+    }
+    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  /// Writes the app-owned overrides (close predicate, TERM_PROGRAM, keybind
+  /// unbinds) as the final config tier so nothing can override them.
+  private static func loadAppOwnedOverrides(
+    into config: ghostty_config_t,
+    shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+  ) {
+    let contents = [
+      appOwnedOverridesString,
+      terminalProgramOverrides(version: appVersion),
+      AppShortcuts.ghosttyKeybindConfigLines(from: shortcutOverrides).joined(separator: "\n"),
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n")
+    guard !contents.isEmpty else { return }
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("kelpie-app-overrides.conf")
+    do {
+      try contents.write(to: tempURL, atomically: true, encoding: .utf8)
+    } catch {
+      // Losing this file leaves app chords bound and behavioral invariants unset.
+      logger.error(
+        "App-owned overrides not delivered; the terminal keeps the app's chords: \(error.localizedDescription)")
+      return
+    }
+    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  /// Surfaces parse rejections that Ghostty otherwise records silently; a
+  /// dropped `keybind` line leaves that chord bound in the terminal.
+  private static func logDiagnostics(of config: ghostty_config_t) {
+    let count = ghostty_config_diagnostics_count(config)
+    guard count > 0 else { return }
+    for index in 0..<count {
+      let diagnostic = ghostty_config_get_diagnostic(config, index)
+      guard let message = diagnostic.message else { continue }
+      logger.error("Ghostty config diagnostic: \(String(cString: message))")
+    }
+  }
+
+  /// Loads the bundled Kelpie light/dark theme plus its opacity and blur. No-op when sync is disabled.
+  private static func loadBundledTheme(into config: ghostty_config_t, enabled: Bool) {
+    guard enabled else { return }
+    guard
+      let lightPath = Bundle.main.path(forResource: "Kelpie Light", ofType: nil),
+      let darkPath = Bundle.main.path(forResource: "Kelpie Dark", ofType: nil)
+    else {
+      assertionFailure("Bundled Kelpie themes missing from app bundle.")
+      logger.warning("Bundled Kelpie themes missing from app bundle.")
+      return
+    }
+    let contents = """
+      theme = light:\(lightPath),dark:\(darkPath)
+      background-opacity = 0.9
+      background-blur = true
+      """
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("kelpie-theme.conf")
+    do {
+      try contents.write(to: tempURL, atomically: true, encoding: .utf8)
+    } catch {
+      logger.warning("Failed to write bundled theme config: \(error.localizedDescription)")
+      return
+    }
+    tempURL.path.withCString { ghostty_config_load_file(config, $0) }
+  }
+
+  func keyboardShortcut(for action: String) -> KeyboardShortcut? {
+    guard let config else { return nil }
+    let trigger = ghostty_config_trigger(config, action, UInt(action.lengthOfBytes(using: .utf8)))
+    return Self.keyboardShortcut(for: trigger)
+  }
+
+  func commandPaletteEntries() -> [GhosttyCommand] {
+    guard let config else { return [] }
+    var value = ghostty_config_command_list_s()
+    let key = "command-palette-entry"
+    guard ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8))) else {
+      return []
+    }
+    guard value.len > 0, let commands = value.commands else { return [] }
+    let buffer = UnsafeBufferPointer(start: commands, count: Int(value.len))
+    return buffer.map(GhosttyCommand.init(cValue:))
+  }
+
+  func focusFollowsMouse() -> Bool {
+    guard let config else { return false }
+    var value = false
+    let key = "focus-follows-mouse"
+    _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+    return value
+  }
+
+  func shouldShowScrollbar() -> Bool {
+    guard let config else { return true }
+    var valuePtr: UnsafePointer<CChar>?
+    let key = "scrollbar"
+    if ghostty_config_get(config, &valuePtr, key, UInt(key.lengthOfBytes(using: .utf8))),
+      let ptr = valuePtr
+    {
+      return String(cString: ptr) != "never"
+    }
+    return true
+  }
+
+  func splitPreserveZoomOnNavigation() -> Bool {
+    guard let config else { return false }
+    var value: CUnsignedInt = 0
+    let key = "split-preserve-zoom"
+    guard ghostty_config_get(config, &value, key, UInt(key.count)) else { return false }
+    // Ghostty's C API bitcasts packed structs into c_uint; the first field maps to bit 0.
+    // https://github.com/ghostty-org/ghostty/blob/6057f8d/src/config/c_get.zig#L74-L84
+    // https://github.com/ghostty-org/ghostty/blob/6057f8d/src/config/c_get.zig#L226-L240
+    return value & (1 << 0) != 0
+  }
+
+  /// Whether new surfaces inherit the spawning surface's font size; defaults on.
+  func windowInheritsFontSize() -> Bool {
+    guard let config else { return true }
+    var value: CUnsignedInt = 0
+    let key = "window-inherit-font-size"
+    guard ghostty_config_get(config, &value, key, UInt(key.count)) else { return true }
+    return value & (1 << 0) != 0
+  }
+
+  // The user's intended opacity, applied at the window level to tint the
+  // translucent chrome behind the surfaces.
+  func backgroundOpacity() -> Double {
+    userBackgroundOpacity
+  }
+
+  // The `unfocused-split-opacity` config value is the *visible* opacity of
+  // the unfocused pane, so the dimming overlay uses `1 - value`.
+  func unfocusedSplitOverlayOpacity() -> Double {
+    guard let config else { return 0 }
+    var value: Double = 0.85
+    let key = "unfocused-split-opacity"
+    _ = ghostty_config_get(config, &value, key, UInt(key.lengthOfBytes(using: .utf8)))
+    return min(max(1 - value, 0), 1)
+  }
+
+  // Returns nil when both `unfocused-split-fill` and `background` lookups
+  // fail so the caller can distinguish "use default" from "render black",
+  // matching the pattern used by `backgroundColorFromConfig`.
+  func unfocusedSplitFill() -> Color? {
+    guard let config else { return nil }
+    var color = ghostty_config_color_s()
+    let fillKey = "unfocused-split-fill"
+    if ghostty_config_get(config, &color, fillKey, UInt(fillKey.lengthOfBytes(using: .utf8))) {
+      return Color(nsColor: NSColor(ghostty: color))
+    }
+    let bgKey = "background"
+    if ghostty_config_get(config, &color, bgKey, UInt(bgKey.lengthOfBytes(using: .utf8))) {
+      return Color(nsColor: NSColor(ghostty: color))
+    }
+    Self.logger.warning(
+      "Ghostty config missing both 'unfocused-split-fill' and 'background'; skipping overlay."
+    )
+    return nil
+  }
+
+  // The user's `split-divider-color`, or nil when unset so the caller keeps
+  // Kelpie's asset divider. Ghostty leaves the key null unless set explicitly.
+  func splitDividerColor() -> Color? {
+    guard let config else { return nil }
+    var color = ghostty_config_color_s()
+    let key = "split-divider-color"
+    guard ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) else {
+      return nil
+    }
+    return Color(nsColor: NSColor(ghostty: color))
+  }
+
+  func backgroundColor() -> NSColor {
+    backgroundColorFromConfig() ?? NSColor.windowBackgroundColor
+  }
+
+  // Installed by the terminal manager: resolves the focused surface's background
+  // color (OSC 11 override or theme). Lets the window chrome follow the selected
+  // surface without the AppKit layer reaching into the manager directly.
+  var focusedSurfaceBackgroundColorProvider: (() -> NSColor?)?
+
+  // The color that tints the whole window: the focused surface's background, or
+  // the theme background as a fallback (no surface / provider not yet installed).
+  func windowTintColor() -> NSColor {
+    if let provider = focusedSurfaceBackgroundColorProvider, let color = provider() {
+      return color
+    }
+    return backgroundColor()
+  }
+
+  func scrollbarAppearanceName() -> NSAppearance.Name {
+    backgroundColor().isLightColor ? .aqua : .darkAqua
+  }
+
+  private func backgroundColorFromConfig() -> NSColor? {
+    guard let config else { return nil }
+    var color: ghostty_config_color_s = .init()
+    let key = "background"
+    if !ghostty_config_get(config, &color, key, UInt(key.lengthOfBytes(using: .utf8))) {
+      return nil
+    }
+    return NSColor(ghostty: color)
+  }
+
+  private static func keyboardShortcut(for trigger: ghostty_input_trigger_s) -> KeyboardShortcut? {
+    let key: KeyEquivalent
+    switch trigger.tag {
+    case GHOSTTY_TRIGGER_PHYSICAL:
+      guard let equiv = keyToEquivalent[trigger.key.physical] else { return nil }
+      key = equiv
+    case GHOSTTY_TRIGGER_UNICODE:
+      guard let scalar = UnicodeScalar(trigger.key.unicode) else { return nil }
+      key = KeyEquivalent(Character(scalar))
+    case GHOSTTY_TRIGGER_CATCH_ALL:
+      return nil
+    default:
+      return nil
+    }
+    return KeyboardShortcut(key, modifiers: eventModifiers(mods: trigger.mods))
+  }
+
+  private static func eventModifiers(mods: ghostty_input_mods_e) -> EventModifiers {
+    var flags: EventModifiers = []
+    if mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0 { flags.insert(.shift) }
+    if mods.rawValue & GHOSTTY_MODS_CTRL.rawValue != 0 { flags.insert(.control) }
+    if mods.rawValue & GHOSTTY_MODS_ALT.rawValue != 0 { flags.insert(.option) }
+    if mods.rawValue & GHOSTTY_MODS_SUPER.rawValue != 0 { flags.insert(.command) }
+    return flags
+  }
+
+  private static let keyToEquivalent: [ghostty_input_key_e: KeyEquivalent] = [
+    GHOSTTY_KEY_ARROW_UP: .upArrow,
+    GHOSTTY_KEY_ARROW_DOWN: .downArrow,
+    GHOSTTY_KEY_ARROW_LEFT: .leftArrow,
+    GHOSTTY_KEY_ARROW_RIGHT: .rightArrow,
+    GHOSTTY_KEY_HOME: .home,
+    GHOSTTY_KEY_END: .end,
+    GHOSTTY_KEY_DELETE: .delete,
+    GHOSTTY_KEY_PAGE_UP: .pageUp,
+    GHOSTTY_KEY_PAGE_DOWN: .pageDown,
+    GHOSTTY_KEY_ESCAPE: .escape,
+    GHOSTTY_KEY_ENTER: .return,
+    GHOSTTY_KEY_TAB: .tab,
+    GHOSTTY_KEY_BACKSPACE: .delete,
+    GHOSTTY_KEY_SPACE: .space,
+  ]
+}
+
+extension Notification.Name {
+  static let ghosttyRuntimeConfigDidChange = Notification.Name("ghosttyRuntimeConfigDidChange")
+  // Posted when the focused surface's resolved background color changes (focus
+  // move or OSC 11), so window chrome re-tints to follow it.
+  static let ghosttyFocusedSurfaceBackgroundDidChange = Notification.Name(
+    "ghosttyFocusedSurfaceBackgroundDidChange")
+  // Posted when a tint mask region (a mounted surface wrapper) lays out or
+  // attaches/detaches from its window, so `WindowTintBackdrop` re-cuts the hole
+  // it masks out of the window tint. Handled synchronously so the mask never lags
+  // a frame behind the region: a stale hole flashes the transparent backing.
+  static let ghosttyTintMaskRegionDidChange = Notification.Name("ghosttyTintMaskRegionDidChange")
+}
+
+extension NSColor {
+  var isLightColor: Bool {
+    luminance > 0.5
+  }
+
+  // Component-wise sRGB comparison; NSColor equality is color-space fragile.
+  // Half an 8-bit step: absorbs conversion jitter while keeping adjacent
+  // OSC 11 values (exactly 1/255 apart, subject to float rounding) distinct.
+  func matchesTint(_ other: NSColor) -> Bool {
+    let tolerance = 0.5 / 255
+    guard let lhs = usingColorSpace(.sRGB), let rhs = other.usingColorSpace(.sRGB) else {
+      return false
+    }
+    return abs(lhs.redComponent - rhs.redComponent) < tolerance
+      && abs(lhs.greenComponent - rhs.greenComponent) < tolerance
+      && abs(lhs.blueComponent - rhs.blueComponent) < tolerance
+      && abs(lhs.alphaComponent - rhs.alphaComponent) < tolerance
+  }
+
+  var luminance: Double {
+    var red: CGFloat = 0
+    var green: CGFloat = 0
+    var blue: CGFloat = 0
+    var alpha: CGFloat = 0
+    guard let rgb = usingColorSpace(.sRGB) else { return 0 }
+    rgb.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+    return (0.299 * red) + (0.587 * green) + (0.114 * blue)
+  }
+
+  fileprivate convenience init(ghostty: ghostty_config_color_s) {
+    let red = Double(ghostty.r) / 255
+    let green = Double(ghostty.g) / 255
+    let blue = Double(ghostty.b) / 255
+    self.init(red: red, green: green, blue: blue, alpha: 1)
+  }
+}
+
+extension NSPasteboard.PasteboardType {
+  init?(mimeType: String) {
+    switch mimeType {
+    case "text/plain":
+      self = .string
+      return
+    default:
+      break
+    }
+    guard let utType = UTType(mimeType: mimeType) else {
+      self.init(mimeType)
+      return
+    }
+    self.init(utType.identifier)
+  }
+}
+
+extension NSPasteboard {
+  private static let ghosttyEscapeCharacters = "\\ ()[]{}<>\"'`!#$&;|*?\t"
+
+  static func ghosttyEscape(_ str: String) -> String {
+    var result = str
+    for char in ghosttyEscapeCharacters {
+      result = result.replacing(String(char), with: "\\\(char)")
+    }
+    return result
+  }
+
+  static var ghosttySelection: NSPasteboard = {
+    NSPasteboard(name: .init("com.mitchellh.ghostty.selection"))
+  }()
+
+  func getOpinionatedStringContents() -> String? {
+    if let urls = readObjects(forClasses: [NSURL.self]) as? [URL],
+      urls.count > 0
+    {
+      return
+        urls
+        .map { $0.isFileURL ? Self.ghosttyEscape($0.path) : $0.absoluteString }
+        .joined(separator: " ")
+    }
+    return string(forType: .string)
+  }
+
+  static func ghostty(_ clipboard: ghostty_clipboard_e) -> NSPasteboard? {
+    switch clipboard {
+    case GHOSTTY_CLIPBOARD_STANDARD:
+      return Self.general
+    case GHOSTTY_CLIPBOARD_SELECTION:
+      return Self.ghosttySelection
+    default:
+      return nil
+    }
+  }
+}

@@ -1,5 +1,5 @@
 name: Question
-description: Ask a question about using or configuring Supacode.
+description: Ask a question about using or configuring Kelpie.
 title: "[Question]: "
 labels:
   - question
@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Have a question about using Supacode? Ask away.
+        Have a question about using Kelpie? Ask away.
 
         If you have found a bug or want to propose a feature, please use the **Bug report** or **Feature request** form instead. For anything security related, use the private advisory link. Questions are not a place to open a pull request.
   - type: textarea
@@ -28,8 +28,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Supacode version and build
-      description: "Optional. From the menu bar: Supacode → About Supacode (e.g. 0.10.5 (1234))."
+      label: Kelpie version and build
+      description: "Optional. From the menu bar: Kelpie → About Kelpie (e.g. 0.10.5 (1234))."
       placeholder: 0.10.5 (1234)
     validations:
       required: false
@@ -48,5 +48,5 @@ body:
       options:
         - label: I searched existing issues and the README, and did not find an answer.
           required: true
-        - label: I agree to follow this project's [Code of Conduct](https://github.com/supabitapp/supacode/blob/main/CODE_OF_CONDUCT.md).
+        - label: I agree to follow this project's [Code of Conduct](https://github.com/ObserverMoment/kelpie/blob/main/CODE_OF_CONDUCT.md).
           required: true

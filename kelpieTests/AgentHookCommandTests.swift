@@ -1,0 +1,1107 @@
+import Foundation
+import Testing
+
+@testable import KelpieSettingsShared
+@testable import kelpie
+
+struct AgentHookCommandTests {
+  // MARK: - Command generation.
+
+  @Test func compositeBusyCarriesOSCBusyEvent() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains("event=busy"))
+  }
+
+  @Test func compositeIdleCarriesOSCIdleEvent() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.idle], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains("event=idle"))
+  }
+
+  // MARK: - AgentCommandHook env encoding.
+
+  @Test func commandHookOmitsEnvWhenNil() throws {
+    let encoded = try Self.encodeHook(.init(command: "run", timeout: 5))
+    #expect(encoded["env"] == nil)
+  }
+
+  @Test func commandHookOmitsEnvWhenEmpty() throws {
+    // An empty map must not serialize as `"env": {}`, so agents without a
+    // passthrough (Claude, Codex) keep their bare hook shape.
+    let encoded = try Self.encodeHook(.init(command: "run", timeout: 5, env: [:]))
+    #expect(encoded["env"] == nil)
+  }
+
+  @Test func commandHookEncodesNonEmptyEnv() throws {
+    let encoded = try Self.encodeHook(
+      .init(command: "run", timeout: 5, env: ["KELPIE_SURFACE_ID": "${KELPIE_SURFACE_ID}"]))
+    #expect(encoded["env"]?.objectValue?["KELPIE_SURFACE_ID"]?.stringValue == "${KELPIE_SURFACE_ID}")
+  }
+
+  private static func encodeHook(_ hook: AgentCommandHook) throws -> [String: JSONValue] {
+    let data = try JSONEncoder().encode(hook)
+    return try JSONDecoder().decode(JSONValue.self, from: data).objectValue ?? [:]
+  }
+
+  // MARK: - Claude canonical hook map.
+
+  @Test func claudePostToolUseFiresIdleNotBusy() throws {
+    // PostToolUse releases the shimmer when a tool finishes, so `busy` tracks
+    // active tool execution rather than the whole turn.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let postToolUse = try #require(groups["PostToolUse"])
+    let commands = Self.commandStrings(in: postToolUse)
+    #expect(!commands.isEmpty)
+    #expect(commands.allSatisfy { $0.contains("event=idle") })
+    #expect(commands.allSatisfy { !$0.contains("event=busy") })
+  }
+
+  @Test func claudePreToolUseOrdersAwaitingAfterBusy() throws {
+    // Order is load-bearing: the "" matcher (busy) must precede the
+    // AskUserQuestion / ExitPlanMode matcher (awaiting) so the named match fires
+    // last and wins, keeping a permission / plan prompt from shimmering under
+    // busy-only hasActivity. Assert by index, not by predicate.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let preToolUse = try #require(groups["PreToolUse"])
+    #expect(preToolUse.count == 2)
+
+    let first = try #require(preToolUse.first)
+    #expect(first.objectValue?["matcher"]?.stringValue == "")
+    let firstCommand = try #require(Self.commandStrings(in: [first]).first)
+    #expect(firstCommand.contains("event=busy"))
+
+    let second = try #require(preToolUse.last)
+    #expect(second.objectValue?["matcher"]?.stringValue == "AskUserQuestion|ExitPlanMode")
+    let secondCommand = try #require(Self.commandStrings(in: [second]).first)
+    #expect(secondCommand.contains("event=awaiting_input"))
+  }
+
+  private static func commandStrings(in groups: [JSONValue]) -> [String] {
+    groups.flatMap { group in
+      group.objectValue?["hooks"]?.arrayValue?.compactMap {
+        $0.objectValue?["command"]?.stringValue
+      } ?? []
+    }
+  }
+
+  // MARK: - Error + compaction events.
+
+  @Test func everyHookEventDecodesOnTheAppSide() {
+    // The emitter and the app carry parallel enums; an event only the emitter knows
+    // about lands on the wire and is silently dropped.
+    for event in HookEvent.allCases {
+      #expect(AgentHookEvent.EventName(rawValue: event.rawValue) != nil)
+    }
+  }
+
+  @Test func emitShellErrorCarriesOSCErrorEvent() {
+    let command = AgentPresenceOSC.emitShell(event: .error, agent: .claude)
+    #expect(command.contains("event=error"))
+  }
+
+  @Test func compositeCompactingCarriesOSCCompactingEvent() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.compacting], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains("event=compacting"))
+  }
+
+  @Test func claudePreCompactMapsToCompactingAndPostCompactIsUnmapped() throws {
+    // PostCompact is intentionally NOT mapped: compaction finishing is not turn
+    // completion. The SessionStart Claude fires afterwards is what ends the state.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let preCompact = try #require(groups["PreCompact"])
+    let commands = Self.commandStrings(in: preCompact)
+    #expect(!commands.isEmpty)
+    #expect(commands.allSatisfy { $0.contains("event=compacting") })
+    #expect(groups["PostCompact"] == nil)
+  }
+
+  @Test func claudeStopProbesTranscriptForErrorButStillIdlesOtherwise() throws {
+    // Both branches must be present, plus the notify leg.
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let stop = try #require(groups["Stop"])
+    let command = try #require(Self.commandStrings(in: stop).first)
+    #expect(command.contains("transcript_path"))
+    #expect(command.contains("isApiErrorMessage"))
+    #expect(command.contains("event=error"))
+    #expect(command.contains("event=idle"))
+    #expect(command.contains("kind=notify"))
+    // SSH portability: no jq / python in the transcript probe.
+    #expect(!command.contains("jq"))
+    #expect(!command.contains("python"))
+  }
+
+  @Test func compositeGuardsOnSurfaceOnly() {
+    // OSC is the only transport now, and signals are unauthenticated: the guard
+    // is just the surface id (the no-op-outside-Kelpie gate). The token and the
+    // worktree / tab ids the socket envelope carried are gone.
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains("KELPIE_SURFACE_ID"))
+    #expect(!command.contains("KELPIE_OSC_TOKEN"))
+    #expect(!command.contains("token="))
+    #expect(!command.contains("KELPIE_WORKTREE_ID"))
+    #expect(!command.contains("KELPIE_TAB_ID"))
+  }
+
+  @Test func compositeSuppressesErrorsAndCarriesSentinel() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains(">/dev/null 2>&1 || true"))
+    #expect(command.hasSuffix(AgentHookSettingsCommand.ownershipMarker))
+  }
+
+  @Test func compositeNotifyIncludesAgent() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    #expect(command.contains("claude"))
+  }
+
+  @Test func managedCommandsResolveTheTTYOnceAndReadStdinOnce() {
+    // Both stdin-reading shapes: the composite notify leg and the Stop probe that
+    // hands `$__in` to a `readsStdin: false` notify.
+    let commands = [
+      AgentHookSettingsCommand.compositeCommand(
+        events: [.idle], forwardStdinAsNotification: true, agent: .codex),
+      AgentHookSettingsCommand.claudeStopCommand(agent: .claude),
+    ]
+    for command in commands {
+      #expect(command.ranges(of: "ps -o").count == 1)
+      #expect(command.ranges(of: "IFS= read -r __in").count == 1)
+      #expect(!command.contains("| tr -d '[:space:]'"))
+      #expect(command.contains("__ppid=${PPID:-}"))
+      #expect(!command.contains("$$"))
+      #expect(command.contains("__tty=${1:-}; set +f"))
+    }
+  }
+
+  @Test func everyAgentHookUsesTheSharedFailureDeadline() throws {
+    let seconds = AgentHookSettingsCommand.timeoutSeconds
+    var checked = 0
+    for groups in [
+      try CodexHookSettings.hooksByEvent(), try ClaudeHookSettings.hooksByEvent(),
+      try GrokHookSettings.hooksByEvent(), try KiroHookSettings.hooksByEvent(),
+      AntigravityHookSettings.hooksByEvent(),
+    ] {
+      for eventGroups in groups.values {
+        for group in eventGroups {
+          guard let object = group.objectValue else { continue }
+          // Three encodings: Kiro states the deadline in milliseconds, Antigravity
+          // puts the hook flat in the group, everyone else nests it under `hooks`.
+          if let millis = object["timeout_ms"] {
+            #expect(millis == .int(AgentHookSettingsCommand.timeoutMilliseconds))
+            checked += 1
+          } else if let timeout = object["timeout"] {
+            #expect(timeout == .int(seconds))
+            checked += 1
+          }
+          for hook in object["hooks"]?.arrayValue ?? [] {
+            #expect(hook.objectValue?["timeout"] == .int(seconds))
+            checked += 1
+          }
+        }
+      }
+    }
+    // Kimi and Copilot carry their own entry types rather than a JSONValue tree.
+    for entry in KimiHookSettings.canonicalEntries() {
+      #expect(entry.timeout == seconds)
+      checked += 1
+    }
+    let copilot = try JSONDecoder().decode(JSONValue.self, from: Data(CopilotHookSettings.source().utf8))
+    for (_, hooks) in copilot.objectValue?["hooks"]?.objectValue ?? [:] {
+      for hook in hooks.arrayValue ?? [] {
+        #expect(hook.objectValue?["timeoutSec"] == .int(seconds))
+        checked += 1
+      }
+    }
+    // Without this the loops pass vacuously when an agent's encoded shape drifts.
+    #expect(checked >= 44)
+  }
+
+  @Test func notifyDoesNotReferenceWorktreeOrTabIDs() {
+    // The notify leg used to prefix a `worktree tab surface agent` header for
+    // the socket text proto. The OSC notify carries only base64 title/body, so
+    // those ids must be gone; only the surface-id gate remains.
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .codex)
+    #expect(!command.contains("KELPIE_WORKTREE_ID"))
+    #expect(!command.contains("KELPIE_TAB_ID"))
+    #expect(command.contains("KELPIE_SURFACE_ID"))
+  }
+
+  // MARK: - Command ownership.
+
+  @Test func currentCommandIsRecognized() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    #expect(AgentHookCommandOwnership.isKelpieManagedCommand(command))
+  }
+
+  @Test func compositeNotifyIsRecognized() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    #expect(AgentHookCommandOwnership.isKelpieManagedCommand(command))
+  }
+
+  @Test func legacyCommandIsRecognized() {
+    let legacy = "KELPIE_CLI_PATH=/usr/bin/kelpie agent-hook --stop"
+    #expect(AgentHookCommandOwnership.isKelpieManagedCommand(legacy))
+    #expect(AgentHookCommandOwnership.isLegacyCommand(legacy))
+  }
+
+  @Test func legacyCommandRequiresBothMarkers() {
+    #expect(!AgentHookCommandOwnership.isLegacyCommand("KELPIE_CLI_PATH only"))
+    #expect(!AgentHookCommandOwnership.isLegacyCommand("agent-hook only"))
+  }
+
+  @Test func unrelatedCommandIsNotRecognized() {
+    #expect(!AgentHookCommandOwnership.isKelpieManagedCommand("echo hello"))
+    #expect(!AgentHookCommandOwnership.isKelpieManagedCommand(nil))
+  }
+
+  @Test func currentCommandIsNotLegacy() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    #expect(!AgentHookCommandOwnership.isLegacyCommand(command))
+  }
+
+  @Test func userAuthoredCommandReferencingSocketEnvVarIsNotOwned() {
+    // A power user's hook that legitimately references the documented
+    // `KELPIE_SOCKET_PATH` env var must NOT be classified as
+    // Kelpie-managed, otherwise install would silently strip it.
+    let userHook = #"echo "saw $KELPIE_SOCKET_PATH" >> ~/my-debug.log"#
+    #expect(!AgentHookCommandOwnership.isKelpieManagedCommand(userHook))
+    #expect(!AgentHookCommandOwnership.isLegacyCommand(userHook))
+  }
+
+  @Test func userAuthoredHookFollowingDocumentedSocketPatternIsNotOwned() {
+    // A user-authored hook that talks to the socket via `/usr/bin/nc -U` but
+    // lacks the sentinel marker must NOT be classified as legacy. Otherwise
+    // install would silently strip it on the next run.
+    let userHook =
+      #"[ -n "$KELPIE_SOCKET_PATH" ] && echo "x" | /usr/bin/nc -U -w1 "$KELPIE_SOCKET_PATH" || true"#
+    #expect(!AgentHookCommandOwnership.isKelpieManagedCommand(userHook))
+    #expect(!AgentHookCommandOwnership.isLegacyCommand(userHook))
+  }
+
+  @Test func verbatimEnvCheckGuardWithoutSentinelIsLegacy() {
+    // Lock the intent of the `envCheck` fingerprint: a command that
+    // carries the verbatim 4-var guard but lacks the sentinel is a
+    // pre-sentinel Kelpie hook and must be pruned on install/uninstall.
+    let legacy =
+      AgentHookSettingsCommand.envCheck
+      + #" && echo "$KELPIE_WORKTREE_ID $KELPIE_TAB_ID $KELPIE_SURFACE_ID 0""#
+      + #" | /usr/bin/nc -U -w1 "$KELPIE_SOCKET_PATH" 2>/dev/null || true"#
+    #expect(AgentHookCommandOwnership.isLegacyCommand(legacy))
+    #expect(AgentHookCommandOwnership.isKelpieManagedCommand(legacy))
+  }
+
+  @Test func legacyCLIShimSessionEventCommandIsRecognized() {
+    // The transitional shape (between the agent-hook CLI era and the
+    // direct-nc era) shelled out to `kelpie integration event`.
+    // Strip-on-update must still recognise it as Kelpie-managed,
+    // otherwise the canonical hook is appended on top instead of
+    // replacing it, producing duplicate SessionStart hooks.
+    let legacy =
+      #"[ -n "${KELPIE_SOCKET_PATH:-}" ] && kelpie integration event session_start"#
+      + #" --agent claude --pid "$PPID" 2>/dev/null || true"#
+    #expect(AgentHookCommandOwnership.isKelpieManagedCommand(legacy))
+    #expect(AgentHookCommandOwnership.isLegacyCommand(legacy))
+  }
+
+  @Test func managedCommandSilencesStdoutAndStderr() {
+    // Codex parses SessionStart hook stdout as structured JSON output and
+    // rejects anything that doesn't match its hook output schema, so the OSC
+    // escape bytes must never leak onto stdout. Hook commands redirect both
+    // streams to /dev/null (the OSC itself goes straight to /dev/tty).
+    let busy = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    let session = AgentHookSettingsCommand.compositeCommand(
+      events: [.sessionStart], forwardStdinAsNotification: false, agent: .claude)
+    #expect(busy.contains(">/dev/null 2>&1"))
+    #expect(session.contains(">/dev/null 2>&1"))
+  }
+
+  // MARK: - Shared constants consistency.
+
+  @Test func socketPathGatesThePresencePidSuffixOnly() {
+    // `KELPIE_SOCKET_PATH` survives in the command solely as the local-host
+    // gate for the pid suffix on presence; the notify-only command (no pid)
+    // never references it.
+    let presence = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    let notifyOnly = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    #expect(presence.contains(AgentHookSettingsCommand.socketPathEnvVar))
+    #expect(!notifyOnly.contains(AgentHookSettingsCommand.socketPathEnvVar))
+  }
+
+  // MARK: - compositeCommand branches.
+
+  @Test func compositeMultiEventWrapsInBraceGroupAndPreservesOrder() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .claude
+    )
+    #expect(composite.contains("event=session_end"))
+    #expect(composite.contains("event=idle"))
+    // Both presence emits live inside one guarded brace group that closes before
+    // the error-suppression tail.
+    #expect(composite.contains("&& { __ppid=${PPID:-}"))
+    #expect(composite.contains("; } >/dev/null 2>&1 || true"))
+    // Order matters: the session_end presence is emitted before idle so the app
+    // sees the lifecycle close-out before the activity reset.
+    let sessionEndIdx = composite.range(of: "event=session_end")?.lowerBound
+    let idleIdx = composite.range(of: "event=idle")?.lowerBound
+    if let sessionEndIdx, let idleIdx {
+      #expect(sessionEndIdx < idleIdx)
+    }
+  }
+
+  @Test func compositeEventsPlusNotifyEmitsPresenceBeforeNotify() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.idle], forwardStdinAsNotification: true, agent: .claude
+    )
+    #expect(composite.contains("event=idle"))
+    #expect(composite.contains("kind=notify"))
+    let presenceIdx = composite.range(of: "event=idle")?.lowerBound
+    let notifyIdx = composite.range(of: "kind=notify")?.lowerBound
+    if let presenceIdx, let notifyIdx {
+      #expect(presenceIdx < notifyIdx)
+    }
+  }
+
+  // MARK: - compositeCommand byte-stability snapshots.
+
+  // Lock the exact on-disk command string per (events, forwardStdin, agent)
+  // tuple. `installState` compares actual vs expected by byte-equality, so
+  // any unintentional shape change here flips every existing install to
+  // `.outdated` on the next refresh and auto-update silently rewrites the
+  // file. Failures here mean: confirm the change is intentional, then
+  // update the snapshot.
+  @Test func compositeByteSnapshot_claudeBusy() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude
+    )
+    let expected = Self.snapshotClaudeBusy
+    #expect(composite == expected)
+  }
+
+  @Test func compositeByteSnapshot_claudeIdleAndNotify() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.idle], forwardStdinAsNotification: true, agent: .claude
+    )
+    #expect(composite == Self.snapshotClaudeIdleAndNotify)
+  }
+
+  @Test func compositeByteSnapshot_claudeSessionEndAndIdle() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .claude
+    )
+    #expect(composite == Self.snapshotClaudeSessionEndAndIdle)
+  }
+
+  @Test func compositeByteSnapshot_codexIdleAndNotify() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.idle], forwardStdinAsNotification: true, agent: .codex
+    )
+    #expect(composite == Self.snapshotCodexIdleAndNotify)
+  }
+
+  @Test func compositeByteSnapshot_kiroIdleAndNotify() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.idle], forwardStdinAsNotification: true, agent: .kiro
+    )
+    #expect(composite == Self.snapshotKiroIdleAndNotify)
+  }
+
+  @Test func compositeByteSnapshot_opencodeSessionEndAndIdle() {
+    // The plugin's `dispose` hook emits session_end + idle; lock its shape.
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .opencode
+    )
+    #expect(composite == Self.snapshotOpencodeSessionEndAndIdle)
+  }
+
+  @Test func compositeByteSnapshot_opencodeBusy() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .opencode
+    )
+    #expect(composite == Self.snapshotOpencodeBusy)
+  }
+
+  /// Cross-check against a fully-inlined literal so a refactor that drifts both
+  /// the production code AND the `presence` / `guardAndTTY` helpers cannot
+  /// pass byte-stability. The other snapshots compose from helpers that mirror
+  /// the production code structure, so they only catch drift if exactly one
+  /// side moves.
+  @Test func compositeByteSnapshot_claudeBusy_inlineLiteral() {
+    let composite = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude
+    )
+    let expected =
+      #"[ -n "${KELPIE_SURFACE_ID:-}" ] && { "#
+      + #"__ppid=${PPID:-}; "#
+      + #"set -f; set -- $(ps -o tty= -p "$__ppid" 2>/dev/null); __tty=${1:-}; set +f; "#
+      + #"case "$__ppid" in 0|1) __ppid="";; esac; "#
+      + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac; "#
+      + #"__sp=""; [ -n "${KELPIE_SOCKET_PATH:-}" ] && [ -n "$__ppid" ] "#
+      + #"&& __sp=";pid=$__ppid"; "#
+      + #"printf '\033]3008;start=claude;event=busy%s\033\\' "$__sp" > "$__tty"; "#
+      + #"} >/dev/null 2>&1 || true # kelpie-managed-hook"#
+    #expect(composite == expected)
+  }
+
+  // MARK: - OSC presence emission.
+
+  @Test func compositeEmitsOSCPresenceGuardedBySurface() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    // OSC is the sole transport, gated only by the surface id (no-op outside
+    // Kelpie). It fires local and remote alike, and carries no token.
+    #expect(command.contains("]3008;start=claude;event=busy"))
+    #expect(command.contains(#"[ -n "${KELPIE_SURFACE_ID:-}" ]"#))
+    #expect(!command.contains("token="))
+    #expect(command.contains(#"> "$__tty""#))
+    #expect(command.contains("ps -o tty= -p \"$__ppid\""))
+    #expect(!command.contains(#"[ -z "${KELPIE_SOCKET_PATH:-}" ]"#))
+  }
+
+  @Test func sessionStartComposesOSCPresenceForOSCAgents() {
+    for agent in [SkillAgent.claude, .codex, .grok, .opencode] {
+      let command = AgentHookSettingsCommand.compositeCommand(
+        events: [.sessionStart], forwardStdinAsNotification: false, agent: agent)
+      #expect(command.contains("]3008;start=\(agent.rawValue);event=session_start"))
+    }
+  }
+
+  @Test func sessionEndUsesOSCEndAction() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains("]3008;end=claude;event=session_end"))
+  }
+
+  @Test func awaitingInputComposesOSCPresence() {
+    // awaiting_input is the badge-critical "needs you" state; assert it rides OSC too.
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.awaitingInput], forwardStdinAsNotification: false, agent: .claude)
+    #expect(command.contains("]3008;start=claude;event=awaiting_input"))
+  }
+
+  @Test func notifyOnlyComposesNotifyOSCButNoPresenceOSC() {
+    // Notify-only (no events) emits the notify OSC but no presence OSC.
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    #expect(command.contains("]3008;start=claude;kind=notify;"))
+    #expect(!command.contains(";event="))
+  }
+
+  @Test func notifyComposesOSCNotify() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.idle], forwardStdinAsNotification: true, agent: .claude)
+    #expect(command.contains("]3008;start=claude;kind=notify;title=%s;body=%s"))
+    #expect(command.contains("base64 | tr -d"))
+  }
+
+  @Test func eventOnlyCommandEmitsNoOSCNotify() {
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+    #expect(!command.contains("kind=notify"))
+  }
+
+  // MARK: - Runtime behaviour (real shell).
+
+  @Test func presenceCarriesLocalPidButNotRemote() async throws {
+    // The pid suffix is the local/remote discriminator: present when
+    // KELPIE_SOCKET_PATH is set (local host), absent over SSH. A regression
+    // that always or never emitted it would silently break the liveness sweep.
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+
+    // Local (socket present): the presence OSC carries a positive pid.
+    let local = try await runHookCommandCapturingTTY(
+      command, env: base.merging(["KELPIE_SOCKET_PATH": "/tmp/sock-\(UUID().uuidString)"]) { $1 })
+    let localSignal = try #require(Self.parsePresence(fromTTY: local))
+    #expect(localSignal.eventRawValue == "busy")
+    #expect(localSignal.pid == ProcessInfo.processInfo.processIdentifier)
+
+    // Remote (socket absent): the presence OSC lands but carries no pid.
+    let remote = try await runHookCommandCapturingTTY(command, env: base)
+    let remoteSignal = try #require(Self.parsePresence(fromTTY: remote))
+    #expect(remoteSignal.eventRawValue == "busy")
+    #expect(remoteSignal.pid == nil)
+  }
+
+  @Test func notifyExtractsBodyFromStdinThroughAwk() async throws {
+    // End-to-end: the real shell hook runs the awk extractor over Claude's stdin
+    // JSON and the resulting OSC parses back with the body intact.
+    let json = #"{"hook_event_name":"Stop","message":"hi there"}"#
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body == "hi there")
+  }
+
+  @Test func notifyExtractsBodyFromPrettyPrintedStdin() async throws {
+    // A payload spanning several lines must survive the stdin capture: reading a
+    // single line would leave `$__in` as "{" and silently empty every field.
+    let json = "{\n  \"hook_event_name\": \"Stop\",\n  \"message\": \"hi there\"\n}\n"
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body == "hi there")
+  }
+
+  @Test func notifyCompletesWhileTheHostHoldsStdinOpen() async throws {
+    // The property the capture exists for: a host that writes its newline-terminated
+    // payload and keeps the pipe open must not stall the hook to its deadline, which
+    // is what `$(cat)` did. Every other stdin test closes the pipe, so only this one
+    // exercises it.
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(
+      command, env: base, stdin: "{\"message\":\"hi there\"}\n", closesStdin: false)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body == "hi there")
+  }
+
+  @Test func notifyStaysSilentWhenStdinCarriesNoDisplayFields() async throws {
+    // A content-free notify still renders (the app falls back to the agent name)
+    // and supersedes the agent's own OSC 9, so nothing must go on the wire.
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(
+      command, env: base, stdin: #"{"hook_event_name":"Stop"}"#)
+    #expect(tty.isEmpty)
+  }
+
+  @Test func ttyResolveFallsBackToDevTTYInAGlobbableWorkingDirectory() async throws {
+    // `ps -o tty=` prints `??` for a parent with no controlling terminal, which is
+    // the documented fallback path. `??` is also a glob, so an unguarded split
+    // resolves it to a two-character worktree entry and aims the OSC at
+    // `/dev/<that name>`. Runs the resolve directly: the capture harness rewrites
+    // `> "$__tty"` away, so it cannot observe this.
+    let resolved = try await Self.runShellResolvingTTY(
+      stubbedPSOutput: "??", workingDirectoryEntries: ["v2", "k8", "ui"])
+    #expect(resolved == "/dev/tty")
+  }
+
+  @Test func ttyResolveGuardsAgainstAReparentedPPID() {
+    // `$PPID` latches at shell start, so it should never read 0 or 1. The guard stays
+    // as defense in depth because `kill(1, 0)`'s EPERM reads as alive to the liveness
+    // sweep and would pin the badge until surface close. Asserted on the command: no
+    // shell lets a test forge `$PPID`.
+    #expect(AgentPresenceOSC.ttyResolveSnippet.contains(#"case "$__ppid" in 0|1) __ppid="";; esac"#))
+  }
+
+  @Test func notifyAwkPreservesEscapedQuotesNewlinesAndUnicode() async throws {
+    // The awk extractor must copy the escaped JSON value verbatim so embedded
+    // quotes / newlines / unicode survive the round-trip, and pick the body via
+    // the precedence list (here `last_assistant_message`, with `message` empty).
+    let json =
+      #"{"hook_event_name":"Stop","title":"Done","message":"","last_assistant_message":"line \"one\"\nDONE ✓"}"#
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.idle], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    #expect(tty.contains("]3008;start=claude;event=idle"))
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.title == "Done")
+    #expect(signal.body == "line \"one\"\nDONE ✓")
+  }
+
+  @Test(arguments: [
+    // message wins over the fallbacks.
+    (#"{"message":"primary","last_assistant_message":"secondary","assistant_response":"tertiary"}"#, "primary"),
+    // The awk is not type-aware: empty / null / numeric `message` falls through only
+    // because `fv` requires an opening `"` after the colon and finds none.
+    (#"{"message":"","last_assistant_message":"fallback"}"#, "fallback"),
+    (#"{"message":null,"last_assistant_message":"fallback"}"#, "fallback"),
+    (#"{"message":42,"assistant_response":"kiro body"}"#, "kiro body"),
+    (#"{"assistant_response":"kiro body"}"#, "kiro body"),
+  ])
+  func notifyAwkResolvesBodyByPrecedence(json: String, expectedBody: String) async throws {
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body == expectedBody)
+  }
+
+  @Test func notifyByteCapFiresAndWireStaysUnderOSCCeiling() async throws {
+    // Drive a body past notifyBodyByteBudget through the REAL awk and assert the
+    // emitted metadata stays under libghostty's 2048-byte OSC ceiling (the headline
+    // guarantee) and the decoded body is a sane truncated prefix. Exercises the
+    // `length(v)>budget` branch and the LC_ALL=C byte cap end to end.
+    let bodyText = String(repeating: "a", count: 4000)
+    let json = #"{"hook_event_name":"Stop","message":"\#(bodyText)"}"#
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    // Metadata is everything after `]3008;` up to ST; assert it is under the cap.
+    let marker = try #require(tty.range(of: "]3008;"))
+    let afterMarker = tty[marker.upperBound...]
+    let stRange = try #require(afterMarker.range(of: "\u{1b}\\"))
+    #expect(afterMarker[..<stRange.lowerBound].utf8.count < 2048)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body?.isEmpty == false)
+    #expect(signal.body?.allSatisfy { $0 == "a" } == true)
+  }
+
+  @Test func notifyMultibyteBodyCapDecodesToCleanPrefix() async throws {
+    // A multibyte (non-ASCII) body driven past the byte budget is the realistic
+    // silent-drop risk for non-English agent output: LC_ALL=C makes the awk cap
+    // byte-based, so it can sever a 3-byte codepoint mid-sequence. The shed loop
+    // in decodeNotifyValue must recover a clean prefix, not corrupt to U+FFFD or
+    // drop the whole body. "日" is 3 bytes, so 2000 of them blow past the 1000-byte
+    // budget and the cap lands mid-codepoint.
+    let bodyText = String(repeating: "日", count: 2000)
+    let json = #"{"hook_event_name":"Stop","message":"\#(bodyText)"}"#
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.body?.isEmpty == false)
+    // Every surviving character is a whole "日": no partial codepoint, no U+FFFD.
+    #expect(signal.body?.allSatisfy { $0 == "日" } == true)
+  }
+
+  @Test func notifyAwkIgnoresKeyTextEscapedInsideAnEarlierValue() async throws {
+    // The awk matches the first `"message":` occurrence. An earlier value that
+    // mentions the key can only do so with escaped quotes (valid JSON), so the
+    // `"message"` token (quote-key-quote) never matches inside it: the real
+    // top-level field still wins. Pins that JSON escaping protects flat extraction.
+    let json = #"{"title":"see \"message\": here","message":"real body"}"#
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+    let signal = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(signal.title == #"see "message": here"#)
+    #expect(signal.body == "real body")
+  }
+
+  @Test func emitsNothingOutsideKelpie() async throws {
+    // No KELPIE_SURFACE_ID = not a Kelpie surface: the guard short-circuits
+    // and the command writes nothing to the tty (the inert-outside-Kelpie
+    // contract).
+    let command = AgentHookSettingsCommand.compositeCommand(
+      events: [.busy], forwardStdinAsNotification: true, agent: .claude)
+    let tty = try await runHookCommandCapturingTTY(command, env: [:], stdin: "{}")
+    #expect(tty.isEmpty)
+  }
+
+  // MARK: - Stop-hook error transcript probe (real shell).
+
+  /// One compact transcript entry; `sessionId` defaults to the current turn's.
+  private static func transcriptLine(
+    type: String, sessionId: String = "S", isApiError: Bool = false
+  ) -> String {
+    let errorField = isApiError ? #","isApiErrorMessage":true,"error":"server_error""# : ""
+    return #"{"type":"\#(type)","sessionId":"\#(sessionId)"\#(errorField),"message":{"role":"\#(type)","content":"x"}}"#
+  }
+
+  /// Writes JSONL `lines` to a temp file and returns its path (caller cleans up).
+  private func writeTranscript(_ lines: [String]) throws -> URL {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("kelpie-transcript-\(UUID().uuidString).jsonl")
+    try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    return url
+  }
+
+  /// Runs the Claude Stop hook with a stdin payload pointing at `transcriptPath`
+  /// and returns the captured tty text. `transcriptPath` nil omits the field.
+  private func runStopHook(transcriptPath: String?) async throws -> String {
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.claudeStopCommand(agent: .claude)
+    let pathField = transcriptPath.map { #","transcript_path":"\#($0)""# } ?? ""
+    let json = #"{"hook_event_name":"Stop","session_id":"S"\#(pathField)}"#
+    return try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+  }
+
+  /// Same, with `session_id` omitted from the hook payload.
+  private func runStopHookWithoutSessionID(transcriptPath: String) async throws -> String {
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.claudeStopCommand(agent: .claude)
+    let json = #"{"hook_event_name":"Stop","transcript_path":"\#(transcriptPath)"}"#
+    return try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+  }
+
+  @Test func stopEmitsErrorWhenCurrentTurnEndedInError() async throws {
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "user"),
+      Self.transcriptLine(type: "assistant"),
+      Self.transcriptLine(type: "assistant", isApiError: true),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=error"))
+    #expect(!tty.contains("event=idle"))
+  }
+
+  @Test func stopIdlesWhenErrorIsStaleAfterReprompt() async throws {
+    // A later user re-prompt means the turn moved on: the error is stale.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true),
+      Self.transcriptLine(type: "user"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenErrorFollowedByCleanAssistant() async throws {
+    // A later non-error assistant reply means the model recovered.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true),
+      Self.transcriptLine(type: "assistant"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenNoErrorPresent() async throws {
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "user"),
+      Self.transcriptLine(type: "assistant"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIgnoresErrorFromDifferentSession() async throws {
+    // An isApiErrorMessage entry from another session must not flag this turn.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", sessionId: "OTHER", isApiError: true)
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenTranscriptMissing() async throws {
+    let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("kelpie-missing-\(UUID().uuidString).jsonl")
+    let tty = try await runStopHook(transcriptPath: missing.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdlesWhenTranscriptPathAbsent() async throws {
+    let tty = try await runStopHook(transcriptPath: nil)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopErrorEmitsFixedNotificationThroughTheNormalPipeline() async throws {
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true)
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=error"))
+    let notify = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(notify.body == AgentHookSettingsCommand.errorNotifyBody)
+    #expect(notify.title == AgentHookSettingsCommand.errorNotifyTitle)
+  }
+
+  @Test func stopIdlesWhenTheHookPayloadCarriesNoSessionID() async throws {
+    // Without a session id the probe cannot tell whose error it is looking at, so
+    // it must fall back to idle rather than flag another session's stale error.
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "assistant", isApiError: true)
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHookWithoutSessionID(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func stopIdleBranchStillForwardsTheTurnNotification() async throws {
+    // The idle branch reuses the stdin the probe already consumed; if `$__in` stops
+    // propagating, every normal turn-end notification silently loses its body.
+    let transcript = try writeTranscript([Self.transcriptLine(type: "assistant")])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let json =
+      #"{"hook_event_name":"Stop","session_id":"S","transcript_path":"\#(transcript.path)","#
+      + #""last_assistant_message":"all done"}"#
+    let tty = try await runHookCommandCapturingTTY(
+      AgentHookSettingsCommand.claudeStopCommand(agent: .claude),
+      env: ["KELPIE_SURFACE_ID": UUID().uuidString],
+      stdin: json
+    )
+    #expect(tty.contains("event=idle"))
+    let notify = try #require(Self.parseNotify(fromTTY: tty))
+    #expect(notify.body == "all done")
+  }
+
+  // MARK: - OSC presence round-trip.
+
+  @Test func presenceOSCRoundTripsThroughParser() async throws {
+    // The shell-produced OSC must parse back into a well-formed, pid-bearing
+    // signal. A guard against a template change that subtly breaks the wire.
+    let surfaceID = UUID()
+    let captured = try await runHookCommandCapturingTTY(
+      AgentHookSettingsCommand.compositeCommand(
+        events: [.sessionStart], forwardStdinAsNotification: false, agent: .claude),
+      env: [
+        "KELPIE_SURFACE_ID": surfaceID.uuidString,
+        "KELPIE_SOCKET_PATH": "/tmp/kelpie-rt-\(UUID().uuidString)",
+      ]
+    )
+    let signal = try #require(Self.parsePresence(fromTTY: captured))
+    #expect(signal.agent == "claude")
+    #expect(signal.eventRawValue == "session_start")
+    // `Process` spawns the hook shell straight from the test runner, so `$__ppid`
+    // must decode to this pid. A weaker "is positive" check would pass for an emit
+    // that sent the shell's own `$$`, which is the regression this pins.
+    #expect(signal.pid == ProcessInfo.processInfo.processIdentifier)
+  }
+
+  @Test func presenceStillCarriesPidWhenPSIsUnavailable() async throws {
+    // The parent pid comes from `${PPID:-}`, so an unreachable `ps` no longer costs
+    // the pid field. Resolving it through `ps -o ppid= -p $$` did: Grok rewrites the
+    // command before spawning it and collapses `$$` to a bare `$`, which left every
+    // Grok presence hook running but emitting nothing (#704 follow-up).
+    let emptyPath = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("kelpie-nops-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: emptyPath, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: emptyPath) }
+
+    let captured = try await runHookCommandCapturingTTY(
+      AgentHookSettingsCommand.compositeCommand(
+        events: [.busy], forwardStdinAsNotification: false, agent: .claude),
+      env: [
+        "KELPIE_SURFACE_ID": UUID().uuidString,
+        "KELPIE_SOCKET_PATH": "/tmp/kelpie-nops-\(UUID().uuidString)",
+        "PATH": emptyPath.path,
+      ]
+    )
+    let signal = try #require(Self.parsePresence(fromTTY: captured))
+    #expect(signal.eventRawValue == "busy")
+    #expect(signal.pid == ProcessInfo.processInfo.processIdentifier)
+  }
+
+  @Test func everyAgentCommandOnlyNamesForwardedOrLocalVariables() {
+    // Grok preflights a bare `$VAR` / `${VAR}` in a hook command as required env and
+    // skips the hook when one is unset, which is how `$PPID` no-opped every managed
+    // presence hook (#704). Forms carrying a parameter-expansion modifier are exempt,
+    // so `${PPID:-}` is fine. The command shape is shared, so hold every agent to the
+    // allowlist, not just Grok.
+    var commands: [String] = SkillAgent.allCases.flatMap { agent in
+      [
+        AgentHookSettingsCommand.compositeCommand(
+          events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: agent),
+        AgentHookSettingsCommand.compositeCommand(
+          events: [.idle], forwardStdinAsNotification: true, agent: agent),
+        AgentHookSettingsCommand.compositeCommand(
+          events: [], forwardStdinAsNotification: true, agent: agent),
+      ]
+    }
+    commands.append(AgentHookSettingsCommand.claudeStopCommand(agent: .claude))
+    #expect(commands.allSatisfy { !ManagedHookCommandVariables.names(in: $0).isEmpty })
+    #expect(commands.allSatisfy { ManagedHookCommandVariables.unexpected(in: $0).isEmpty })
+  }
+
+  /// Reconstructs libghostty's OSC 3008 split from a captured tty stream: the
+  /// first `verb=id` field becomes the context id, the rest is the metadata
+  /// `parse` consumes. Returns the parsed signal.
+  private static func parsePresence(fromTTY tty: String) -> AgentPresenceOSC.Signal? {
+    guard let marker = tty.range(of: "]3008;") else { return nil }
+    let afterMarker = tty[marker.upperBound...]
+    guard let stRange = afterMarker.range(of: "\u{1b}\\") else { return nil }
+    let body = afterMarker[..<stRange.lowerBound]
+    guard let firstSemi = body.firstIndex(of: ";") else { return nil }
+    let firstField = body[..<firstSemi]
+    let metadata = String(body[body.index(after: firstSemi)...])
+    guard let equals = firstField.firstIndex(of: "=") else { return nil }
+    let id = String(firstField[firstField.index(after: equals)...])
+    return AgentPresenceOSC.parse(id: id, metadata: metadata)
+  }
+
+  /// Same split as `parsePresence`, but targets the notify OSC (which may follow a
+  /// presence OSC in the same tty stream) by anchoring on its `kind=notify`.
+  private static func parseNotify(fromTTY tty: String) -> AgentPresenceOSC.NotifySignal? {
+    guard let kindRange = tty.range(of: "kind=notify") else { return nil }
+    guard
+      let marker = tty.range(
+        of: "]3008;", options: .backwards, range: tty.startIndex..<kindRange.lowerBound)
+    else { return nil }
+    let afterMarker = tty[marker.upperBound...]
+    guard let stRange = afterMarker.range(of: "\u{1b}\\") else { return nil }
+    let body = afterMarker[..<stRange.lowerBound]
+    guard let firstSemi = body.firstIndex(of: ";") else { return nil }
+    let firstField = body[..<firstSemi]
+    let metadata = String(body[body.index(after: firstSemi)...])
+    guard let equals = firstField.firstIndex(of: "=") else { return nil }
+    let id = String(firstField[firstField.index(after: equals)...])
+    return AgentPresenceOSC.parseNotify(id: id, metadata: metadata)
+  }
+
+  // Shared head: surface-id guard, then (inside one brace group) resolve $__ppid /
+  // $__tty from the parent agent's terminal since the hook has none of its own.
+  private static let guardAndTTY =
+    #"[ -n "${KELPIE_SURFACE_ID:-}" ] && { "#
+    + #"__ppid=${PPID:-}; "#
+    + #"set -f; set -- $(ps -o tty= -p "$__ppid" 2>/dev/null); __tty=${1:-}; set +f; "#
+    + #"case "$__ppid" in 0|1) __ppid="";; esac; "#
+    + #"case "$__tty" in *[0-9]*) __tty="/dev/${__tty#/dev/}";; *) __tty="/dev/tty";; esac; "#
+  private static let suppressTail = #"} >/dev/null 2>&1 || true # kelpie-managed-hook"#
+
+  private static func presence(_ action: String, _ agent: String, _ event: String) -> String {
+    #"__sp=""; [ -n "${KELPIE_SOCKET_PATH:-}" ] && [ -n "$__ppid" ] "#
+      + #"&& __sp=";pid=$__ppid"; "#
+      + #"printf '\033]3008;\#(action)=\#(agent);event=\#(event)%s\033\\' "$__sp" > "$__tty"; "#
+  }
+
+  private static func notify(_ agent: String) -> String {
+    let bodyKeys = AgentPresenceOSC.notifyBodyKeys.joined(separator: ",")
+    let awk = AgentPresenceOSC.notifyExtractAwk
+    return #"\#(AgentPresenceOSC.readStdinSnippet); "#
+      + #"__t=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(AgentPresenceOSC.titleField)" "#
+      + #"-v budget=\#(AgentPresenceOSC.notifyTitleByteBudget) '\#(awk)' | base64 | tr -d '\n'); "#
+      + #"__b=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(bodyKeys)" "#
+      + #"-v budget=\#(AgentPresenceOSC.notifyBodyByteBudget) '\#(awk)' | base64 | tr -d '\n'); "#
+      + #"[ -n "$__t$__b" ] && "#
+      + #"printf '\033]3008;start=\#(agent);kind=notify;title=%s;body=%s\033\\' "$__t" "$__b" > "$__tty"; "#
+  }
+
+  static let snapshotClaudeBusy =
+    guardAndTTY + presence("start", "claude", "busy") + suppressTail
+
+  static let snapshotClaudeIdleAndNotify =
+    guardAndTTY + presence("start", "claude", "idle") + notify("claude") + suppressTail
+
+  static let snapshotClaudeSessionEndAndIdle =
+    guardAndTTY + presence("end", "claude", "session_end") + presence("start", "claude", "idle") + suppressTail
+
+  static let snapshotCodexIdleAndNotify =
+    guardAndTTY + presence("start", "codex", "idle") + notify("codex") + suppressTail
+
+  static let snapshotKiroIdleAndNotify =
+    guardAndTTY + presence("start", "kiro", "idle") + notify("kiro") + suppressTail
+
+  static let snapshotOpencodeBusy =
+    guardAndTTY + presence("start", "opencode", "busy") + suppressTail
+
+  static let snapshotOpencodeSessionEndAndIdle =
+    guardAndTTY + presence("end", "opencode", "session_end") + presence("start", "opencode", "idle") + suppressTail
+
+  /// Runs `ttyResolveSnippet` against a `ps` stub that always prints
+  /// `stubbedPSOutput`, from a directory seeded with `workingDirectoryEntries`,
+  /// and returns the resolved `$__tty`.
+  private static func runShellResolvingTTY(
+    stubbedPSOutput: String, workingDirectoryEntries: [String]
+  ) async throws -> String {
+    try await runResolveSnippet(
+      echoing: "$__tty", stubbedPSOutput: stubbedPSOutput,
+      workingDirectoryEntries: workingDirectoryEntries)
+  }
+
+  private static func runResolveSnippet(
+    echoing variable: String, stubbedPSOutput: String, workingDirectoryEntries: [String]
+  ) async throws -> String {
+    let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("kelpie-hook-resolve-\(UUID().uuidString)", isDirectory: true)
+    let binDir = workDir.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workDir) }
+    for entry in workingDirectoryEntries {
+      FileManager.default.createFile(
+        atPath: workDir.appendingPathComponent(entry).path, contents: nil)
+    }
+    let stub = binDir.appendingPathComponent("ps")
+    try "#!/bin/sh\nprintf '%s\\n' '\(stubbedPSOutput)'\n".write(
+      to: stub, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", "\(AgentPresenceOSC.ttyResolveSnippet); printf '%s' \"\(variable)\""]
+    process.currentDirectoryURL = workDir
+    process.environment = ["PATH": "\(binDir.path):/usr/bin:/bin"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    let (exited, exitContinuation) = AsyncStream<Void>.makeStream()
+    process.terminationHandler = { _ in exitContinuation.finish() }
+    try process.run()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    for await _ in exited {}
+    return String(bytes: data, encoding: .utf8) ?? ""
+  }
+
+  /// Runs `command` with `/dev/tty` (the OSC sink) redirected to a capture file,
+  /// optionally feeding `stdin`, and returns the text written to the fake tty.
+  private func runHookCommandCapturingTTY(
+    _ command: String, env: [String: String], stdin: String = "",
+    closesStdin: Bool = true
+  ) async throws -> String {
+    let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("kelpie-hook-tty-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workDir) }
+    let captureFile = workDir.appendingPathComponent("tty")
+    FileManager.default.createFile(atPath: captureFile.path, contents: nil)
+    // Append (`>>`) not truncate: a real /dev/tty streams, so multiple OSC writes
+    // (presence + notify) must both land. A plain `> file` would have the second
+    // printf clobber the first.
+    let patched = command.replacing(#"> "$__tty""#, with: ">> \(captureFile.path)")
+
+    let process = Process()
+    // `sh`, not `zsh`: agents spawn hooks with `sh -c`, and zsh neither word-splits
+    // nor globs an unquoted `$(...)`, so it cannot see either failure mode.
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", patched]
+    process.currentDirectoryURL = workDir
+    var environment = ProcessInfo.processInfo.environment
+    // The host may already export Kelpie-surface vars (tests can run inside a
+    // Kelpie surface); clear them so every absent-variable assertion is genuine.
+    environment.removeValue(forKey: "KELPIE_SOCKET_PATH")
+    environment.removeValue(forKey: "KELPIE_SURFACE_ID")
+    for (key, value) in env { environment[key] = value }
+    process.environment = environment
+    let stdinPipe = Pipe()
+    process.standardInput = stdinPipe
+    let (exited, exitContinuation) = AsyncStream<Void>.makeStream()
+    process.terminationHandler = { _ in exitContinuation.finish() }
+    try process.run()
+    stdinPipe.fileHandleForWriting.write(Data(stdin.utf8))
+    if closesStdin {
+      try? stdinPipe.fileHandleForWriting.close()
+    }
+    // A held-open pipe has no host deadline to kill the hook, so bound it here or a
+    // regression in the stdin capture hangs the suite instead of failing it.
+    let watchdog = Task {
+      try? await Task.sleep(for: .seconds(closesStdin ? 30 : 5))
+      if process.isRunning { process.terminate() }
+    }
+    for await _ in exited {}
+    watchdog.cancel()
+    if !closesStdin {
+      try? stdinPipe.fileHandleForWriting.close()
+    }
+    // Cancellation ends the iteration early; returning here would read an
+    // empty capture file and let emptiness assertions pass vacuously.
+    guard !Task.isCancelled else {
+      if process.isRunning { process.terminate() }
+      throw CancellationError()
+    }
+    return try String(contentsOf: captureFile, encoding: .utf8)
+  }
+}

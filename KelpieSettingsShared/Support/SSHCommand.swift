@@ -1,0 +1,281 @@
+import Foundation
+
+/// Pure, stateless builders for the `ssh` command lines Kelpie issues against
+/// a `RemoteHost`. Two consumers, two shapes:
+///
+///   - `invocation(...)` returns an argv for `Process` / `ShellClient`: ssh
+///     receives the remote command as a single argument, so only the *remote*
+///     shell re-parses it (one quoting level, applied in `remoteCommand`).
+///   - `commandLine(...)` returns a single string for a parent `/bin/sh -c`
+///     (Ghostty's surface command), so the remote command must additionally be
+///     quoted for the *local* shell (two quoting levels, three when the payload
+///     rides through `posixShellWrapped`).
+///
+/// Every invocation shares `controlOptions` so N git calls plus the terminal
+/// reuse one multiplexed SSH connection: one auth / FIDO touch, and no
+/// per-call TCP+handshake round trip that would otherwise make a many-worktree
+/// sidebar crawl.
+public nonisolated enum SSHCommand {
+  public static let sshExecutablePath = "/usr/bin/ssh"
+
+  /// `%C` is ssh's hash of (local host, remote host, port, user): stable per
+  /// connection and short, keeping the control socket well under the
+  /// `sockaddr_un.sun_path` limit. ssh expands both `~` and `%C` itself.
+  public static let defaultControlPath = "~/.ssh/kelpie-%C"
+
+  /// SSH connection-multiplexing options. `auto` opens a master if none exists
+  /// and reuses it otherwise; `ControlPersist` keeps it warm briefly after the
+  /// last client so a burst of git calls shares one connection. `ServerAlive*`
+  /// lives here, not per-caller: keepalives belong to whichever process is the
+  /// master, so every path that can create one must carry them or a dead
+  /// connection is never detected for any mux client riding it (~15s bound).
+  public static func controlOptions(controlPath: String = defaultControlPath) -> [String] {
+    [
+      "-o", "ControlMaster=auto",
+      "-o", "ControlPath=\(controlPath)",
+      "-o", "ControlPersist=10m",
+      "-o", "ServerAliveInterval=5",
+      "-o", "ServerAliveCountMax=3",
+    ]
+  }
+
+  /// Options for a non-interactive background probe (e.g. resolving a remote
+  /// repository at launch). `BatchMode` so it fails fast instead of blocking on
+  /// a password / host-key prompt; `ConnectTimeout` bounds the TCP+handshake.
+  /// Keepalives come from `controlOptions`. A live ControlMaster (an open
+  /// terminal) bypasses auth, so the common case is fast.
+  public static let backgroundProbeOptions: [String] = [
+    "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=10",
+  ]
+
+  /// Options for an interactive terminal surface. `ConnectTimeout` bounds each
+  /// reconnect attempt; 30s (vs the probe's 10s) tolerates slow ProxyJump/VPN
+  /// handshakes while keeping the reconnect loop live. It does override a
+  /// larger ssh_config value, the price of never hanging an attempt forever.
+  /// No `BatchMode`, so first-connect password / 2FA prompts still work.
+  /// Keepalives come from `controlOptions`.
+  public static let interactiveOptions: [String] = [
+    "-o", "ConnectTimeout=30",
+  ]
+
+  /// POSIX single-quote a token for a `/bin/sh` parser. Use `loginShellQuote`
+  /// whenever the re-parser is the remote login shell, which may be fish.
+  public static func shellQuote(_ value: String) -> String {
+    "'" + value.replacing("'", with: "'\\''") + "'"
+  }
+
+  /// Quotes a token for whichever login shell ssh hands the remote command to.
+  /// Every shell accepts single-quoted spans, but fish rewrites `\'` and `\\`
+  /// inside them, so close the span and emit those two as escapes that decode
+  /// to the same byte in sh, bash, zsh and fish. csh survives the escapes but
+  /// not a token carrying `!` or a newline, so it stays out of the contract.
+  public static func loginShellQuote(_ value: String) -> String {
+    // Scalars, not characters: a backslash carrying a combining mark is one
+    // Character, and matching on it would leave the backslash unescaped.
+    var quoted = "'"
+    for scalar in value.unicodeScalars {
+      switch scalar {
+      case "'":
+        quoted += "'\"'\"'"
+      case "\\":
+        quoted += "'\\\\'"
+      default:
+        quoted.unicodeScalars.append(scalar)
+      }
+    }
+    quoted += "'"
+    return quoted
+  }
+
+  /// Hands `script` to `/bin/sh`, so the remote login shell only parses this
+  /// one fish/POSIX-portable line and the script itself runs under a guaranteed
+  /// POSIX shell with the login shell's exported PATH already in place.
+  public static func posixShellWrapped(_ script: String) -> String {
+    "exec /bin/sh -c " + loginShellQuote(script)
+  }
+
+  /// The command string the *remote* shell runs for a local
+  /// `(executable, arguments, workingDirectory)` invocation. A working
+  /// directory becomes `cd -- <dir> && exec ...` so the remote process starts
+  /// in the worktree and replaces the shell (signals / exit status map
+  /// straight through).
+  public static func remoteCommand(
+    executable: String,
+    arguments: [String],
+    workingDirectory: URL?
+  ) -> String {
+    let invocation = ([executable] + arguments).map(loginShellQuote).joined(separator: " ")
+    guard let workingDirectory else {
+      return invocation
+    }
+    let directory = loginShellQuote(workingDirectory.path(percentEncoded: false))
+    // Redirect so a `cd` hook loaded by the remote profile can't print into the
+    // stdout callers parse (#776). No `builtin`: the remote shell is unknown and
+    // dash lacks it, so a redefined `cd` still wins here.
+    return "cd -- \(directory) >/dev/null && exec \(invocation)"
+  }
+
+  /// Wrap a remote command so it runs under a **login** shell. ssh's default
+  /// `$SHELL -c <cmd>` is non-interactive *and* non-login, so on macOS it only
+  /// inherits `~/.zshenv`'s bare PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so
+  /// Homebrew's `/opt/homebrew/bin` (where remote `zmx` / `git` / the `wt` shim
+  /// live) is NOT on it and the remote command fails with `command not found`.
+  /// A login shell reads `/etc/zprofile` (path_helper) + `~/.zprofile`
+  /// (`brew shellenv`), restoring the full PATH. `$SHELL` is expanded by ssh's
+  /// own outer shell; `exec` replaces it so signals / exit status pass through.
+  public static func loginShellWrapped(_ remoteScript: String) -> String {
+    "exec \"$SHELL\" -l -c " + loginShellQuote(remoteScript)
+  }
+
+  /// Login-shell-wrapped remote command with an optional `env` prefix.
+  /// Numbered positionals are POSIX-only: fish binds `$argv` and expands `$1`
+  /// to an empty string without erroring, so a script reading `$1` must go
+  /// through `loginShellWrappedPosixScript` instead.
+  ///
+  /// `environment` is applied via an `env` prefix so the login shell inherits
+  /// the vars *before* it sources its profile (a plain `export` inside the `-c`
+  /// script would run only after the profile had already loaded).
+  public static func loginShellWrapped(
+    _ remoteScript: String,
+    positionalArguments: [String],
+    environment: [String: String] = [:]
+  ) -> String {
+    var line = "exec " + environmentPrefix(environment) + "\"$SHELL\" -l -c " + loginShellQuote(remoteScript)
+    for argument in positionalArguments {
+      line += " " + loginShellQuote(argument)
+    }
+    return line
+  }
+
+  /// Loads the remote login-shell environment, then execs `/bin/sh` to run a
+  /// POSIX script: the login shell may be fish, which has no `$1`, so numbered
+  /// positionals must be consumed by `sh` rather than by the login shell.
+  public static func loginShellWrappedPosixScript(
+    _ remoteScript: String,
+    positionalArguments: [String],
+    environment: [String: String] = [:]
+  ) -> String {
+    var invocation = posixShellWrapped(remoteScript)
+    for argument in positionalArguments {
+      invocation += " " + loginShellQuote(argument)
+    }
+    return loginShellWrapped(invocation, positionalArguments: [], environment: environment)
+  }
+
+  /// An `env NAME='value' …` prefix (sorted, each value login-shell-quoted) or
+  /// `""` when there is nothing to set. Names are fixed identifiers so they
+  /// stay unquoted; values are quoted, so the prefix can't inject extra tokens.
+  private static func environmentPrefix(_ environment: [String: String]) -> String {
+    guard !environment.isEmpty else { return "" }
+    let assignments =
+      environment
+      .sorted { $0.key < $1.key }
+      .map { "\($0.key)=\(loginShellQuote($0.value))" }
+      .joined(separator: " ")
+    return "env \(assignments) "
+  }
+
+  /// Mirror Ghostty's terminfo fallback: a fresh remote account rarely has the
+  /// `xterm-ghostty` entry, so downgrade to `xterm-256color` before the login
+  /// shell reads its profile (missing `infocmp` counts as an absent entry). The
+  /// probe augments `PATH` in a subshell so a profile-only `infocmp` resolves
+  /// without leaking that `PATH` into the session.
+  static let terminalCompatibilityPrelude =
+    #"if [ "${TERM:-}" = xterm-ghostty ] && ! ( "#
+    + WellKnownToolDirectories.pathExportPrefix
+    + #"infocmp "$TERM" >/dev/null 2>&1 ); then "#
+    + "export TERM=xterm-256color; fi; "
+
+  /// Wrap in `/bin/sh` so a fish login shell only parses `exec`, and export the
+  /// resolved TERM before the real login shell sources its profile. The login
+  /// shell re-parses this line, so the payload needs `loginShellQuote`.
+  static func terminalCompatibleLoginShellCommand(_ loginShellCommand: String) -> String {
+    posixShellWrapped(terminalCompatibilityPrelude + loginShellCommand)
+  }
+
+  /// Full local `ssh` argv for `Process` / `ShellClient`. The remote command is
+  /// a single argument; ssh hands it to the remote login shell verbatim.
+  public static func invocation(
+    host: RemoteHost,
+    executable: String,
+    arguments: [String],
+    workingDirectory: URL?,
+    allocateTTY: Bool = false,
+    controlPath: String = defaultControlPath,
+    extraOptions: [String] = []
+  ) -> (executableURL: URL, arguments: [String]) {
+    var sshArguments = controlOptions(controlPath: controlPath)
+    sshArguments += extraOptions
+    if allocateTTY {
+      sshArguments.append("-tt")
+    }
+    sshArguments += host.sshOptionArguments
+    sshArguments.append(host.sshDestination)
+    sshArguments.append(
+      loginShellWrapped(
+        remoteCommand(executable: executable, arguments: arguments, workingDirectory: workingDirectory)
+      )
+    )
+    return (URL(fileURLWithPath: sshExecutablePath), sshArguments)
+  }
+
+  /// Full `ssh` line as a single string for a parent `/bin/sh -c` (Ghostty's
+  /// surface command). The fixed option tokens are shell-safe and stay
+  /// unquoted (so ssh still expands `~` / `%C` in `ControlPath`); the
+  /// login-shell-wrapped remote command is quoted for the local shell.
+  public static func commandLine(
+    host: RemoteHost,
+    remoteCommand: String,
+    allocateTTY: Bool = true,
+    controlPath: String = defaultControlPath
+  ) -> String {
+    commandLine(
+      host: host,
+      loginShellCommand: loginShellWrapped(remoteCommand),
+      allocateTTY: allocateTTY,
+      controlPath: controlPath
+    )
+  }
+
+  /// `commandLine` variant that loads the remote login-shell environment, then
+  /// runs a POSIX script under `/bin/sh` with forwarded positional arguments.
+  public static func commandLine(
+    host: RemoteHost,
+    remoteScript: String,
+    positionalArguments: [String],
+    environment: [String: String] = [:],
+    allocateTTY: Bool = true,
+    controlPath: String = defaultControlPath
+  ) -> String {
+    commandLine(
+      host: host,
+      loginShellCommand: loginShellWrappedPosixScript(
+        remoteScript,
+        positionalArguments: positionalArguments,
+        environment: environment
+      ),
+      allocateTTY: allocateTTY,
+      controlPath: controlPath
+    )
+  }
+
+  /// Assemble the interactive ssh argv, applying the terminal-compatibility wrap.
+  private static func commandLine(
+    host: RemoteHost,
+    loginShellCommand: String,
+    allocateTTY: Bool,
+    controlPath: String
+  ) -> String {
+    var tokens = [sshExecutablePath]
+    tokens += controlOptions(controlPath: controlPath)
+    tokens += interactiveOptions
+    if allocateTTY {
+      tokens.append("-tt")
+    }
+    tokens += host.sshOptionArguments
+    tokens.append(host.sshDestination)
+    tokens.append(shellQuote(terminalCompatibleLoginShellCommand(loginShellCommand)))
+    return tokens.joined(separator: " ")
+  }
+}

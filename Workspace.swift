@@ -1,37 +1,37 @@
 import ProjectDescription
 
 let workspace = Workspace(
-  name: "supacode",
+  name: "kelpie",
   projects: [
     ".",
   ],
   schemes: [
     .scheme(
-      name: "supacode",
+      name: "kelpie",
       buildAction: .buildAction(
         targets: [
-          .project(path: "supacode.xcodeproj", target: "supacode"),
+          .project(path: "kelpie.xcodeproj", target: "kelpie"),
         ],
         runPostActionsOnFailure: true
       ),
       testAction: .targets(
         [
           .testableTarget(
-            target: .project(path: "supacode.xcodeproj", target: "supacodeTests")
+            target: .project(path: "kelpie.xcodeproj", target: "kelpieTests")
           ),
         ],
         configuration: .debug,
-        expandVariableFromTarget: .project(path: "supacode.xcodeproj", target: "supacode")
+        expandVariableFromTarget: .project(path: "kelpie.xcodeproj", target: "kelpie")
       ),
       runAction: .runAction(
         configuration: .debug,
-        executable: .executable(.project(path: "supacode.xcodeproj", target: "supacode")),
-        expandVariableFromTarget: .project(path: "supacode.xcodeproj", target: "supacode")
+        executable: .executable(.project(path: "kelpie.xcodeproj", target: "kelpie")),
+        expandVariableFromTarget: .project(path: "kelpie.xcodeproj", target: "kelpie")
       ),
       archiveAction: .archiveAction(configuration: .release),
       profileAction: .profileAction(
         configuration: .release,
-        executable: .project(path: "supacode.xcodeproj", target: "supacode")
+        executable: .project(path: "kelpie.xcodeproj", target: "kelpie")
       ),
       analyzeAction: .analyzeAction(configuration: .debug)
     ),

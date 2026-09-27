@@ -4,38 +4,38 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="${SRCROOT:-$(cd "${script_dir}/.." && pwd)}"
 
-app_path="${SUPACODE_APP_PATH:-${repo_root}/build/supacode/Build/Products/Debug/supacode.app}"
-cli_path="${SUPACODE_CLI:-${app_path}/Contents/Resources/bin/supacode}"
+app_path="${KELPIE_APP_PATH:-${repo_root}/build/kelpie/Build/Products/Debug/kelpie.app}"
+cli_path="${KELPIE_CLI:-${app_path}/Contents/Resources/bin/kelpie}"
 zmx_path="${ZMX:-${app_path}/Contents/Resources/zmx/zmx}"
 target_repo="${repo_root}"
 worktree_id=""
 created_tab_id=""
 surface_id=""
 session_id=""
-timeout_seconds="${SUPACODE_SMOKE_TIMEOUT:-12}"
-settle_seconds="${SUPACODE_SMOKE_SETTLE_SECONDS:-2}"
+timeout_seconds="${KELPIE_SMOKE_TIMEOUT:-12}"
+settle_seconds="${KELPIE_SMOKE_SETTLE_SECONDS:-2}"
 keep_tab=false
 
 usage() {
   cat <<'EOF'
 Usage: scripts/smoke-zmx-crash-recovery.sh [--repo PATH] [--worktree ID] [--timeout SECONDS] [--settle SECONDS] [--keep-tab]
 
-Creates a zmx-backed Supacode tab, forcibly detaches the zmx client process,
+Creates a zmx-backed Kelpie tab, forcibly detaches the zmx client process,
 and verifies the same tab/surface/session survives. This exercises the regression
-where an unexpected zmx client exit used to close the Supacode tab and kill the session.
+where an unexpected zmx client exit used to close the Kelpie tab and kill the session.
 
 Options:
   --repo PATH       Repo path to open before selecting the focused worktree. Defaults to this repo.
-  --worktree ID     Existing worktree ID to target. Skips $SUPACODE_WORKTREE_ID and `supacode repo open`.
+  --worktree ID     Existing worktree ID to target. Skips $KELPIE_WORKTREE_ID and `kelpie repo open`.
   --timeout SECONDS Polling timeout for each async app observation. Defaults to 12.
   --settle SECONDS  Require the recovered tab to stay alive for this long before PASS. Defaults to 2.
   --keep-tab        Leave the created tab open after the smoke test.
 
 Environment overrides:
-  SUPACODE_WORKTREE_ID Existing worktree ID to target when --worktree is omitted.
-  SUPACODE_APP_PATH Path to the .app under test.
-  SUPACODE_CLI      Path to the supacode CLI under test.
-  SUPACODE_SMOKE_SETTLE_SECONDS Stable-survival duration after detach. Defaults to 2.
+  KELPIE_WORKTREE_ID Existing worktree ID to target when --worktree is omitted.
+  KELPIE_APP_PATH Path to the .app under test.
+  KELPIE_CLI      Path to the kelpie CLI under test.
+  KELPIE_SMOKE_SETTLE_SECONDS Stable-survival duration after detach. Defaults to 2.
   ZMX               Path to the zmx binary used for `zmx ls`.
 EOF
 }
@@ -167,7 +167,7 @@ run_dispatch_allow_timeout() {
     return 0
   fi
 
-  if printf '%s\n' "${output}" | grep -F -q "Timed out waiting for response from Supacode."; then
+  if printf '%s\n' "${output}" | grep -F -q "Timed out waiting for response from Kelpie."; then
     note "${description} did not answer within the CLI socket timeout; continuing to poll app state."
     return 0
   fi
@@ -183,8 +183,8 @@ capture_socket_count() {
 }
 
 capture_env_worktree() {
-  [ -n "${SUPACODE_WORKTREE_ID:-}" ] || return 1
-  worktree_id="${SUPACODE_WORKTREE_ID}"
+  [ -n "${KELPIE_WORKTREE_ID:-}" ] || return 1
+  worktree_id="${KELPIE_WORKTREE_ID}"
   "${cli_path}" tab list --worktree "${worktree_id}" >/dev/null 2>&1
 }
 
@@ -255,18 +255,18 @@ note "Using CLI: ${cli_path}"
 note "Using zmx: ${zmx_path}"
 
 if ! capture_socket_count; then
-  note "No Supacode socket found; launching debug app by path."
+  note "No Kelpie socket found; launching debug app by path."
   /usr/bin/open "${app_path}"
-  wait_for "Supacode socket" capture_socket_count
+  wait_for "Kelpie socket" capture_socket_count
 fi
 
-if [ "${socket_count}" -gt 1 ] && [ -z "${SUPACODE_SOCKET_PATH:-}" ]; then
-  fail "multiple Supacode sockets found. Run from the target Supacode terminal or set SUPACODE_SOCKET_PATH."
+if [ "${socket_count}" -gt 1 ] && [ -z "${KELPIE_SOCKET_PATH:-}" ]; then
+  fail "multiple Kelpie sockets found. Run from the target Kelpie terminal or set KELPIE_SOCKET_PATH."
 fi
 
 if [ -z "${worktree_id}" ]; then
   if capture_env_worktree; then
-    note "Using SUPACODE_WORKTREE_ID: ${worktree_id}"
+    note "Using KELPIE_WORKTREE_ID: ${worktree_id}"
   else
     note "Opening repo: ${target_repo}"
     run_dispatch_allow_timeout "repo open" "${cli_path}" repo open "${target_repo}"
@@ -282,7 +282,7 @@ run_dispatch_allow_timeout "tab new" "${cli_path}" tab new --worktree "${worktre
 wait_for "created tab ${created_tab_id}" tab_exists
 
 surface_id="${created_tab_id}"
-session_id="supa-$(printf '%s' "${surface_id}" | tr '[:upper:]' '[:lower:]')"
+session_id="kelp-$(printf '%s' "${surface_id}" | tr '[:upper:]' '[:lower:]')"
 note "Surface: ${surface_id}"
 note "Expected zmx session: ${session_id}"
 wait_for "zmx session ${session_id}" session_exists

@@ -1,0 +1,271 @@
+import Foundation
+import Testing
+
+@testable import KelpieSettingsShared
+
+struct AgentIntegrationTests {
+  @Test func stateIsInstalledWhenAllComponentsReportInstalled() throws {
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        component(kind: .hooks, installed: true),
+        component(kind: .skills, installed: true),
+      ]
+    )
+    #expect(try integration.state() == .installed)
+  }
+
+  @Test func stateIsNotInstalledWhenAllComponentsAbsent() throws {
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        component(kind: .hooks, installed: false),
+        component(kind: .skills, installed: false),
+      ]
+    )
+    #expect(try integration.state() == .notInstalled)
+  }
+
+  @Test func stateIsOutdatedWhenSomeMissing() throws {
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        component(kind: .hooks, state: .installed),
+        component(kind: .skills, state: .notInstalled),
+      ]
+    )
+    #expect(try integration.state() == .outdated)
+  }
+
+  @Test func stateIsOutdatedWhenAnyComponentReportsOutdated() throws {
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        component(kind: .hooks, state: .outdated),
+        component(kind: .skills, state: .installed),
+      ]
+    )
+    #expect(try integration.state() == .outdated)
+  }
+
+  @Test func stateThrowsWhenAnyComponentCannotBeDetermined() {
+    // The central invariant: a partially readable integration must not
+    // aggregate to `.outdated`, which would arm an unattended rewrite of the
+    // very files that could not be read.
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        undeterminableComponent(kind: .hooks),
+        component(kind: .skills, state: .installed),
+      ]
+    )
+    #expect(throws: AgentFileUnreadableError.self) { try integration.state() }
+  }
+
+  @Test func installRunsComponentsFrontToBack() async throws {
+    let order = OrderRecorder()
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        recordingComponent(label: "first", recorder: order),
+        recordingComponent(label: "second", recorder: order),
+        recordingComponent(label: "third", recorder: order),
+      ]
+    )
+    try await integration.install()
+    #expect(await order.installs == ["first", "second", "third"])
+  }
+
+  @Test func uninstallRunsComponentsBackToFront() throws {
+    let order = OrderRecorder()
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        recordingComponent(label: "first", recorder: order),
+        recordingComponent(label: "second", recorder: order),
+        recordingComponent(label: "third", recorder: order),
+      ]
+    )
+    try integration.uninstall()
+    #expect(order.uninstallsSync == ["third", "second", "first"])
+  }
+
+  @Test func partialInstallFailureRollsBackInReverseOrder() async throws {
+    let order = OrderRecorder()
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        recordingComponent(label: "first", recorder: order),
+        recordingComponent(label: "second", recorder: order),
+        AgentIntegration.Component(
+          kind: .skills,
+          state: { .notInstalled },
+          install: { throw TestError.boom },
+          // Should never run during rollback — the throwing component
+          // didn't complete, so there's nothing to undo.
+          uninstall: {}
+        ),
+      ]
+    )
+    do {
+      try await integration.install()
+      Issue.record("Expected install to throw")
+    } catch {
+      // First two components installed; third threw and rolled them back in reverse.
+      #expect(await order.installs == ["first", "second"])
+      #expect(order.uninstallsSync == ["second", "first"])
+    }
+  }
+
+  @Test func uninstallSweepsAllComponentsEvenWhenOneFails() throws {
+    let order = OrderRecorder()
+    let integration = AgentIntegration(
+      agent: .claude,
+      components: [
+        recordingComponent(label: "first", recorder: order),
+        AgentIntegration.Component(
+          kind: .skills,
+          state: { .notInstalled },
+          install: {},
+          uninstall: { throw TestError.boom }
+        ),
+        recordingComponent(label: "third", recorder: order),
+      ]
+    )
+    do {
+      try integration.uninstall()
+      Issue.record("Expected uninstall to rethrow first error")
+    } catch {
+      // The middle component threw, but uninstall continues so the others get cleaned up.
+      #expect(order.uninstallsSync == ["third", "first"])
+    }
+  }
+
+  @Test func installRefusesWhenRequiredDirectoryMissingAndSkipsComponents() async throws {
+    let order = OrderRecorder()
+    let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appending(path: "kelpie-missing-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let integration = AgentIntegration(
+      agent: .grok,
+      components: [recordingComponent(label: "hooks", recorder: order)],
+      requiredDirectory: missing
+    )
+
+    await #expect(throws: AgentIntegrationError.notInstalled(.grok)) {
+      try await integration.install()
+    }
+    // The gate short-circuits before any component runs, so nothing is written.
+    #expect(await order.installs == [])
+  }
+
+  @Test func installRefusesWhenRequiredPathIsFileNotDirectory() async throws {
+    let file = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appending(path: "kelpie-file-\(UUID().uuidString)")
+    try Data().write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+
+    let order = OrderRecorder()
+    // A regular file at the config path is not a valid harness dir: the gate
+    // must reject it, not treat it as "installed".
+    let integration = AgentIntegration(
+      agent: .grok,
+      components: [recordingComponent(label: "hooks", recorder: order)],
+      requiredDirectory: file
+    )
+
+    await #expect(throws: AgentIntegrationError.notInstalled(.grok)) {
+      try await integration.install()
+    }
+    #expect(await order.installs == [])
+  }
+
+  @Test func installProceedsWhenRequiredDirectoryExists() async throws {
+    let order = OrderRecorder()
+    let present = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appending(path: "kelpie-present-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: present, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: present) }
+
+    let integration = AgentIntegration(
+      agent: .grok,
+      components: [recordingComponent(label: "hooks", recorder: order)],
+      requiredDirectory: present
+    )
+
+    try await integration.install()
+    #expect(await order.installs == ["hooks"])
+  }
+
+  // MARK: - Helpers.
+
+  private func component(
+    kind: AgentIntegration.Component.Kind, installed: Bool
+  ) -> AgentIntegration.Component {
+    component(kind: kind, state: installed ? .installed : .notInstalled)
+  }
+
+  private func undeterminableComponent(
+    kind: AgentIntegration.Component.Kind
+  ) -> AgentIntegration.Component {
+    AgentIntegration.Component(
+      kind: kind,
+      state: { throw AgentFileUnreadableError(displayPath: "~/.claude/settings.json", reason: "nope") },
+      install: {},
+      uninstall: {}
+    )
+  }
+
+  private func component(
+    kind: AgentIntegration.Component.Kind, state: ComponentInstallState
+  ) -> AgentIntegration.Component {
+    AgentIntegration.Component(
+      kind: kind,
+      state: { state },
+      install: {},
+      uninstall: {}
+    )
+  }
+
+  private func recordingComponent(
+    label: String, recorder: OrderRecorder
+  ) -> AgentIntegration.Component {
+    AgentIntegration.Component(
+      kind: .hooks,
+      state: { .notInstalled },
+      install: { await recorder.recordInstall(label) },
+      uninstall: { recorder.recordUninstallSync(label) }
+    )
+  }
+}
+
+private enum TestError: Error { case boom }
+
+/// Two recording surfaces: `installs` is read async (install closures are
+/// `async throws`); `uninstallsSync` is read sync (uninstall closures are sync
+/// throws). Splitting avoids needing an actor for the sync side. Labels are
+/// arbitrary strings so tests can name components without coupling to the
+/// production `Component.Kind` enum.
+private final class OrderRecorder: @unchecked Sendable {
+  private var _uninstallsSync: [String] = []
+  private let installState = InstallRecorder()
+
+  var installs: [String] {
+    get async { await installState.values }
+  }
+
+  var uninstallsSync: [String] { _uninstallsSync }
+
+  func recordInstall(_ label: String) async {
+    await installState.append(label)
+  }
+
+  func recordUninstallSync(_ label: String) {
+    _uninstallsSync.append(label)
+  }
+}
+
+private actor InstallRecorder {
+  private var _values: [String] = []
+  var values: [String] { _values }
+  func append(_ label: String) { _values.append(label) }
+}

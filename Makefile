@@ -9,9 +9,9 @@ MAKEFLAGS += --no-builtin-rules
 # Derived values (DO NOT TOUCH).
 CURRENT_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 CURRENT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(CURRENT_MAKEFILE_PATH)))
-PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/supacode.xcworkspace
+PROJECT_WORKSPACE := $(CURRENT_MAKEFILE_DIR)/kelpie.xcworkspace
 DERIVED_DATA_PATH := $(CURRENT_MAKEFILE_DIR)/.build/DerivedData
-APP_SCHEME := supacode
+APP_SCHEME := kelpie
 PROJECT_CONFIG_PATH := Configurations/Project.xcconfig
 TUIST_GENERATION_STAMP_DIR := $(CURRENT_MAKEFILE_DIR)/.build/.tuist-generated-stamps
 TUIST_INSTALL_STAMP := $(TUIST_GENERATION_STAMP_DIR)/.installed
@@ -20,7 +20,7 @@ TUIST_SOURCE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/none
 TUIST_RELEASE_GENERATION_STAMP := $(TUIST_GENERATION_STAMP_DIR)/development-release
 # Test targets use explicit source globs expanded at generation time, so a new
 # test file must trigger a regen or it would silently run in no bundle.
-TUIST_GENERATION_INPUTS := Project.swift Workspace.swift Tuist.swift Tuist/Package.swift $(wildcard Tuist/Package.resolved) $(PROJECT_CONFIG_PATH) mise.toml scripts/build-ghostty.sh scripts/build-zmx.sh $(wildcard supacodeTests/*.swift)
+TUIST_GENERATION_INPUTS := Project.swift Workspace.swift Tuist.swift Tuist/Package.swift $(wildcard Tuist/Package.resolved) $(PROJECT_CONFIG_PATH) mise.toml scripts/build-ghostty.sh scripts/build-zmx.sh $(wildcard kelpieTests/*.swift)
 TUIST_GENERATE_CACHE_PROFILE ?= development
 TUIST_CACHE_CONFIGURATION ?= Debug
 VERSION ?=
@@ -30,16 +30,16 @@ BODY ?=
 # Export so headline markdown reaches the script without a shell re-parse of quotes/backticks.
 export VERSION BUILD TITLE BODY
 XCODEBUILD_FLAGS ?=
-SUPACODE_SKIP_PREFLIGHT ?=
+KELPIE_SKIP_PREFLIGHT ?=
 # Parallel test execution (Swift Testing in-process + one process per test bundle).
 # Escape hatch: make test TEST_PARALLEL=NO.
 TEST_PARALLEL ?= YES
 # The explicit workspace scheme carries every test bundle; the auto-generated
-# app scheme only tests supacodeTests.
-TEST_SCHEME := supacode-tests
+# app scheme only tests kelpieTests.
+TEST_SCHEME := kelpie-tests
 # xcodebuild's streamed log reduces a parallel-bundle failure to "Test case ... failed"; the assertion
 # text only lives in the result bundle, which `make test` dumps on failure.
-TEST_RESULT_BUNDLE := build/supacode-tests.xcresult
+TEST_RESULT_BUNDLE := build/kelpie-tests.xcresult
 
 # Export a Zig-linkable Xcode per build recipe (no global xcode-select -s). Plain
 # assignment so a missing Xcode aborts the recipe under -e.
@@ -50,7 +50,7 @@ SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; ex
 
 ifdef CI
 TUIST_INSTALL_FLAGS := --force-resolved-versions
-SUPACODE_SKIP_PREFLIGHT := 1
+KELPIE_SKIP_PREFLIGHT := 1
 else
 TUIST_INSTALL_FLAGS :=
 endif
@@ -72,7 +72,7 @@ $(TUIST_INSTALL_STAMP): $(TUIST_GENERATION_INPUTS) | preflight
 $(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
-	rm -rf supacode.xcodeproj supacode.xcworkspace
+	rm -rf kelpie.xcodeproj kelpie.xcworkspace
 	rm -rf "$(DERIVED_DATA_PATH)"
 	mise exec -- tuist generate --no-open --cache-profile "$*"
 	touch "$@"
@@ -81,7 +81,7 @@ $(TUIST_GENERATION_STAMP_DIR)/%: $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAM
 $(TUIST_RELEASE_GENERATION_STAMP): $(TUIST_GENERATION_INPUTS) $(TUIST_INSTALL_STAMP)
 	mkdir -p "$(TUIST_GENERATION_STAMP_DIR)"
 	find "$(TUIST_GENERATION_STAMP_DIR)" -mindepth 1 -maxdepth 1 ! -name '.installed' -delete
-	rm -rf supacode.xcodeproj supacode.xcworkspace
+	rm -rf kelpie.xcodeproj kelpie.xcworkspace
 	rm -rf "$(DERIVED_DATA_PATH)"
 	mise exec -- tuist generate --no-open --cache-profile development --configuration Release
 	touch "$@"
@@ -91,9 +91,9 @@ doctor: # Diagnose build prerequisites and print the fix for each failure
 
 # Order-only preflight on the install stamp, so every build flow fails fast with
 # doctor's actionable message before tuist / xcodebuild / zig run. Never forces a
-# rebuild. Skipped when SUPACODE_SKIP_PREFLIGHT is set (CI sets it above).
+# rebuild. Skipped when KELPIE_SKIP_PREFLIGHT is set (CI sets it above).
 preflight:
-	@[ -n "$(SUPACODE_SKIP_PREFLIGHT)" ] || ./scripts/doctor.sh --quiet
+	@[ -n "$(KELPIE_SKIP_PREFLIGHT)" ] || ./scripts/doctor.sh --quiet
 
 build-ghostty-xcframework: | preflight # Build ghostty framework
 	./scripts/build-ghostty.sh
@@ -138,11 +138,11 @@ install-dev-build: build-app # install dev build to /Applications
 archive: $(TUIST_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
 	mkdir -p build
 	$(SELECT_DEVELOPER_DIR); \
-	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" -archivePath build/supacode.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -destination "generic/platform=macOS" -derivedDataPath "$(DERIVED_DATA_PATH)" -archivePath build/kelpie.xcarchive archive CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$$APPLE_TEAM_ID" CODE_SIGN_IDENTITY="$$DEVELOPER_ID_IDENTITY_SHA" OTHER_CODE_SIGN_FLAGS="--timestamp" -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
 
 export-archive: # Export xarchive
 	$(SELECT_DEVELOPER_DIR); \
-	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/supacode.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
+	bash -o pipefail -c 'xcodebuild -exportArchive -archivePath build/kelpie.xcarchive -exportPath build/export -exportOptionsPlist build/ExportOptions.plist 2>&1 | { mise exec -- xcbeautify --quiet --disable-logging || cat; }'
 
 test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	@$(SELECT_DEVELOPER_DIR); \
@@ -157,7 +157,7 @@ test: $(TUIST_DEVELOPMENT_GENERATION_STAMP) # Run all tests
 	exit $$status
 
 format: # Format code with swift-format (mise-pinned for reproducibility).
-	mise exec -- swift-format --parallel --in-place --recursive --configuration ./.swift-format.json supacode supacode-cli supacodeTests SupacodeSettingsShared SupacodeSettingsFeature
+	mise exec -- swift-format --parallel --in-place --recursive --configuration ./.swift-format.json kelpie kelpie-cli kelpieTests KelpieSettingsShared KelpieSettingsFeature
 
 lint: # Lint code with swiftlint
 	mise exec -- swiftlint lint --quiet --config .swiftlint.yml
@@ -165,7 +165,7 @@ lint: # Lint code with swiftlint
 check: format lint # Format and lint
 
 log-stream: # Stream logs from the app via log stream
-	log stream --predicate 'subsystem == "app.supabit.supacode"' --style compact --color always
+	log stream --predicate 'subsystem == "com.observermoment.kelpie"' --style compact --color always
 
 bump-version: # Bump app version (usage: make bump-version VERSION=x.y.z [BUILD=123] [TITLE=… BODY=…])
 	@./scripts/bump-version.sh

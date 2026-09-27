@@ -19,26 +19,26 @@ let ghosttyFingerprintInputScript = """
 """
 
 let appResources: ResourceFileElements = [
-  "supacode/AppIcon.icon",
-  "supacode/Assets.xcassets",
-  "supacode/notification.wav",
+  "kelpie/AppIcon.icon",
+  "kelpie/Assets.xcassets",
+  "kelpie/notification.wav",
 ]
 
 let appBuildableFolders: [BuildableFolder] = [
-  "supacode/App",
-  "supacode/Clients",
-  "supacode/Commands",
-  "supacode/Domain",
-  "supacode/Features",
-  "supacode/Infrastructure",
-  "supacode/Support",
+  "kelpie/App",
+  "kelpie/Clients",
+  "kelpie/Commands",
+  "kelpie/Domain",
+  "kelpie/Features",
+  "kelpie/Infrastructure",
+  "kelpie/Support",
 ]
 
 let appDependencies: [TargetDependency] = [
-  .target(name: "SupacodeSettingsShared"),
-  .target(name: "SupacodeSettingsFeature"),
+  .target(name: "KelpieSettingsShared"),
+  .target(name: "KelpieSettingsFeature"),
   .target(name: "GhosttyKit"),
-  .target(name: "supacode-cli"),
+  .target(name: "kelpie-cli"),
   .external(name: "ComposableArchitecture"),
   .external(name: "CustomDump"),
   .external(name: "Dependencies"),
@@ -53,9 +53,9 @@ let appDependencies: [TargetDependency] = [
 
 let testDependencies: [TargetDependency] = [
   .target(name: "GhosttyKit"),
-  .target(name: "SupacodeSettingsShared"),
-  .target(name: "SupacodeSettingsFeature"),
-  .target(name: "supacode"),
+  .target(name: "KelpieSettingsShared"),
+  .target(name: "KelpieSettingsFeature"),
+  .target(name: "kelpie"),
   .external(name: "Clocks"),
   .external(name: "ComposableArchitecture"),
   .external(name: "ConcurrencyExtras"),
@@ -72,48 +72,48 @@ let testDependencies: [TargetDependency] = [
 // separate processes: most tests are MainActor-bound, so one bundle caps the
 // whole suite at a single main thread.
 let sharedTestSupportSources: [Path] = [
-  "supacodeTests/AgentPresence+TestHelpers.swift",
-  "supacodeTests/BrandedIDTestSupport.swift",
-  "supacodeTests/LoginShellTestSupport.swift",
-  "supacodeTests/ProcessTestSupport.swift",
-  "supacodeTests/RemoteRepoTestSupport.swift",
-  "supacodeTests/RepositoriesSidebarTestHelpers.swift",
-  "supacodeTests/RepositoryLocalSettingsTestStorage.swift",
-  "supacodeTests/RepositoriesStateTestHelpers.swift",
-  "supacodeTests/SettingsTestStorage.swift",
-  "supacodeTests/ShellInvocationTestSupport.swift",
-  "supacodeTests/SidebarConsistency.swift",
-  "supacodeTests/TabContentTestSupport.swift",
-  "supacodeTests/WorktreeTestSupport.swift",
-  "supacodeTests/WritableKeyPath+Sendable.swift",
+  "kelpieTests/AgentPresence+TestHelpers.swift",
+  "kelpieTests/BrandedIDTestSupport.swift",
+  "kelpieTests/LoginShellTestSupport.swift",
+  "kelpieTests/ProcessTestSupport.swift",
+  "kelpieTests/RemoteRepoTestSupport.swift",
+  "kelpieTests/RepositoriesSidebarTestHelpers.swift",
+  "kelpieTests/RepositoryLocalSettingsTestStorage.swift",
+  "kelpieTests/RepositoriesStateTestHelpers.swift",
+  "kelpieTests/SettingsTestStorage.swift",
+  "kelpieTests/ShellInvocationTestSupport.swift",
+  "kelpieTests/SidebarConsistency.swift",
+  "kelpieTests/TabContentTestSupport.swift",
+  "kelpieTests/WorktreeTestSupport.swift",
+  "kelpieTests/WritableKeyPath+Sendable.swift",
 ]
 
 // Real git / shell subprocess suites.
 let gitTestSources: [Path] = [
-  "supacodeTests/AgentHook*.swift",
-  "supacodeTests/Git*.swift",
-  "supacodeTests/RemoteSSHCommandTests.swift",
-  "supacodeTests/ShellClient*.swift",
-  "supacodeTests/SocketLivenessCLITests.swift",
-  "supacodeTests/WorktreeEnvironmentTests.swift",
-  "supacodeTests/WorktreeStatusCLITests.swift",
+  "kelpieTests/AgentHook*.swift",
+  "kelpieTests/Git*.swift",
+  "kelpieTests/RemoteSSHCommandTests.swift",
+  "kelpieTests/ShellClient*.swift",
+  "kelpieTests/SocketLivenessCLITests.swift",
+  "kelpieTests/WorktreeEnvironmentTests.swift",
+  "kelpieTests/WorktreeStatusCLITests.swift",
 ]
 
 // AppFeature and RepositoriesFeature suites, the two biggest TestStore
 // families; without their own bundle the main bundle is the wall-clock pole.
 let featureTestSources: [Path] = [
-  "supacodeTests/AppFeature*.swift",
-  "supacodeTests/RepositoriesFeature*.swift",
+  "kelpieTests/AppFeature*.swift",
+  "kelpieTests/RepositoriesFeature*.swift",
 ]
 
 // Ghostty runtime, terminal manager, and zmx suites.
 let terminalTestSources: [Path] = [
-  "supacodeTests/Ghostty*.swift",
-  "supacodeTests/LayoutFeature*.swift",
-  "supacodeTests/Layouts*.swift",
-  "supacodeTests/SplitTree*.swift",
-  "supacodeTests/WorktreeTerminalManager*.swift",
-  "supacodeTests/Zmx*.swift",
+  "kelpieTests/Ghostty*.swift",
+  "kelpieTests/LayoutFeature*.swift",
+  "kelpieTests/Layouts*.swift",
+  "kelpieTests/SplitTree*.swift",
+  "kelpieTests/WorktreeTerminalManager*.swift",
+  "kelpieTests/Zmx*.swift",
 ]
 
 func testBundle(name: String, sources: [SourceFileGlob]) -> Target {
@@ -121,7 +121,7 @@ func testBundle(name: String, sources: [SourceFileGlob]) -> Target {
     name: name,
     destinations: .macOS,
     product: .unitTests,
-    bundleId: "app.supabit.\(name)",
+    bundleId: "com.observermoment.\(name)",
     deploymentTargets: .macOS("26.1"),
     infoPlist: .default,
     sources: SourceFilesList.sourceFilesList(globs: sources),
@@ -129,7 +129,7 @@ func testBundle(name: String, sources: [SourceFileGlob]) -> Target {
     settings: .settings(
       base: [
         "BUNDLE_LOADER": "$(TEST_HOST)",
-        "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/supacode.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/supacode",
+        "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/kelpie.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/kelpie",
       ],
       defaultSettings: .essential
     )
@@ -149,22 +149,22 @@ let embedGhosttyResourcesOutputPaths: [Path] = [
 let embedRuntimeAssetsInputPaths: [FileListGlob] = [
   "$(SRCROOT)/Resources/git-wt/wt",
   "$(SRCROOT)/\(zmxBinaryPath.pathString)",
-  "$(SRCROOT)/supacode/Resources/Themes/Supacode Light",
-  "$(SRCROOT)/supacode/Resources/Themes/Supacode Dark",
-  "$(BUILT_PRODUCTS_DIR)/supacode",
-  "$(UNINSTALLED_PRODUCTS_DIR)/$(PLATFORM_NAME)/supacode",
+  "$(SRCROOT)/kelpie/Resources/Themes/Kelpie Light",
+  "$(SRCROOT)/kelpie/Resources/Themes/Kelpie Dark",
+  "$(BUILT_PRODUCTS_DIR)/kelpie",
+  "$(UNINSTALLED_PRODUCTS_DIR)/$(PLATFORM_NAME)/kelpie",
 ]
 
 let embedRuntimeAssetsOutputPaths: [Path] = [
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/git-wt/wt",
   "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/zmx/zmx",
-  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Supacode Light",
-  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Supacode Dark",
-  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/supacode",
+  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Kelpie Light",
+  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Kelpie Dark",
+  "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/kelpie",
 ]
 
 let project = Project(
-  name: "supacode",
+  name: "kelpie",
   settings: .settings(
     base: [
       "CLANG_ENABLE_MODULES": "YES",
@@ -183,14 +183,14 @@ let project = Project(
   ),
   targets: [
     .target(
-      name: "supacode-cli",
+      name: "kelpie-cli",
       destinations: .macOS,
       product: .commandLineTool,
-      bundleId: "app.supabit.supacode.cli",
+      bundleId: "com.observermoment.kelpie.cli",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
       buildableFolders: [
-        "supacode-cli",
+        "kelpie-cli",
       ],
       dependencies: [
         .external(name: "ArgumentParser"),
@@ -199,8 +199,8 @@ let project = Project(
         base: [
           "CODE_SIGNING_ALLOWED": "NO",
           "ENABLE_HARDENED_RUNTIME": "YES",
-          "PRODUCT_MODULE_NAME": "supacode_cli",
-          "PRODUCT_NAME": "supacode",
+          "PRODUCT_MODULE_NAME": "kelpie_cli",
+          "PRODUCT_NAME": "kelpie",
           "SKIP_INSTALL": "YES",
           "SWIFT_DEFAULT_ACTOR_ISOLATION": "MainActor",
         ],
@@ -221,17 +221,17 @@ let project = Project(
       output: .xcframework(path: ghosttyXCFrameworkPath, linking: .static)
     ),
     .target(
-      name: "SupacodeSettingsShared",
+      name: "KelpieSettingsShared",
       destinations: .macOS,
       product: .staticFramework,
-      bundleId: "app.supabit.supacode.settings-shared",
+      bundleId: "com.observermoment.kelpie.settings-shared",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
       resources: [
         .folderReference(path: "Resources/Skills"),
       ],
       buildableFolders: [
-        "SupacodeSettingsShared",
+        "KelpieSettingsShared",
       ],
       dependencies: [
         .external(name: "ComposableArchitecture"),
@@ -247,17 +247,17 @@ let project = Project(
       )
     ),
     .target(
-      name: "SupacodeSettingsFeature",
+      name: "KelpieSettingsFeature",
       destinations: .macOS,
       product: .staticFramework,
-      bundleId: "app.supabit.supacode.settings-feature",
+      bundleId: "com.observermoment.kelpie.settings-feature",
       deploymentTargets: .macOS("26.0"),
       infoPlist: .default,
       buildableFolders: [
-        "SupacodeSettingsFeature",
+        "KelpieSettingsFeature",
       ],
       dependencies: [
-        .target(name: "SupacodeSettingsShared"),
+        .target(name: "KelpieSettingsShared"),
         .external(name: "ComposableArchitecture"),
         .external(name: "Dependencies"),
         .external(name: "Sharing"),
@@ -270,12 +270,12 @@ let project = Project(
       )
     ),
     .target(
-      name: "supacode",
+      name: "kelpie",
       destinations: .macOS,
       product: .app,
-      bundleId: "app.supabit.supacode",
+      bundleId: "com.observermoment.kelpie",
       deploymentTargets: .macOS("26.0"),
-      infoPlist: .file(path: "supacode/Info.plist"),
+      infoPlist: .file(path: "kelpie/Info.plist"),
       resources: appResources,
       buildableFolders: appBuildableFolders,
       scripts: [
@@ -313,48 +313,48 @@ let project = Project(
           "OTHER_LDFLAGS": "$(inherited) -lc++",
         ],
         debug: [
-          "CODE_SIGN_ENTITLEMENTS": "supacode/supacodeDebug.entitlements",
+          "CODE_SIGN_ENTITLEMENTS": "kelpie/kelpieDebug.entitlements",
         ],
         release: [
-          "CODE_SIGN_ENTITLEMENTS": "supacode/supacode.entitlements",
+          "CODE_SIGN_ENTITLEMENTS": "kelpie/kelpie.entitlements",
         ],
         defaultSettings: .essential
       )
     ),
     testBundle(
-      name: "supacodeTests",
+      name: "kelpieTests",
       sources: [
         SourceFileGlob.glob(
-          "supacodeTests/**",
+          "kelpieTests/**",
           excluding: featureTestSources + gitTestSources + terminalTestSources
         ),
       ]
     ),
     testBundle(
-      name: "supacodeFeatureTests",
+      name: "kelpieFeatureTests",
       sources: (featureTestSources + sharedTestSupportSources).map { SourceFileGlob.glob($0) }
     ),
     testBundle(
-      name: "supacodeGitTests",
+      name: "kelpieGitTests",
       sources: (gitTestSources + sharedTestSupportSources).map { SourceFileGlob.glob($0) }
     ),
     testBundle(
-      name: "supacodeTerminalTests",
+      name: "kelpieTerminalTests",
       sources: (terminalTestSources + sharedTestSupportSources).map { SourceFileGlob.glob($0) }
     ),
   ],
   schemes: [
-    // Explicit all-bundles test scheme: the autogenerated `supacode` scheme
-    // only tests supacodeTests, and custom workspace schemes do not generate.
+    // Explicit all-bundles test scheme: the autogenerated `kelpie` scheme
+    // only tests kelpieTests, and custom workspace schemes do not generate.
     .scheme(
-      name: "supacode-tests",
-      buildAction: .buildAction(targets: ["supacode"]),
+      name: "kelpie-tests",
+      buildAction: .buildAction(targets: ["kelpie"]),
       testAction: .targets(
         [
-          .testableTarget(target: "supacodeTests", parallelization: .enabled),
-          .testableTarget(target: "supacodeFeatureTests", parallelization: .enabled),
-          .testableTarget(target: "supacodeGitTests", parallelization: .enabled),
-          .testableTarget(target: "supacodeTerminalTests", parallelization: .enabled),
+          .testableTarget(target: "kelpieTests", parallelization: .enabled),
+          .testableTarget(target: "kelpieFeatureTests", parallelization: .enabled),
+          .testableTarget(target: "kelpieGitTests", parallelization: .enabled),
+          .testableTarget(target: "kelpieTerminalTests", parallelization: .enabled),
         ],
         configuration: .debug
       )

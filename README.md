@@ -1,4 +1,4 @@
-# Supacode
+# Kelpie
 
 **A native macOS command center for running coding agents in parallel.**
 
@@ -6,9 +6,9 @@ Run several coding agents side by side from one window: each task gets its own g
 its own real terminal. Sessions persist in the background, so quitting the app or dropping an SSH
 connection loses nothing.
 
-[supacode.sh](https://supacode.sh)
+[kelpie.sh](https://github.com/ObserverMoment/kelpie)
 
-<img width="3180" height="1788" alt="Supacode screenshot" src="https://github.com/user-attachments/assets/72a8dc95-020a-4dc2-9010-ba1adc9518ba" />
+<img width="3180" height="1788" alt="Kelpie screenshot" src="https://github.com/user-attachments/assets/72a8dc95-020a-4dc2-9010-ba1adc9518ba" />
 
 ## Features
 
@@ -28,7 +28,7 @@ included. On by default; a quit option tears everything down when you want a cle
 
 ### Remote SSH repositories (Beta)
 
-Point Supacode at a repository on a remote host over SSH and it manages that repo's worktrees
+Point Kelpie at a repository on a remote host over SSH and it manages that repo's worktrees
 like a local one. Every git probe and the terminal share one multiplexed SSH connection, so you
 authenticate (or touch your security key) once. When the host has zmx, remote sessions survive
 dropped connections and laptop sleep: the connection retries and reattaches instead of
@@ -42,15 +42,15 @@ minus the git-only tools. You can also clone a remote URL straight into a folder
 
 ### Coding agent presence
 
-Supacode detects the agent in each pane and shows a live badge: busy, awaiting input, or idle. It
+Kelpie detects the agent in each pane and shows a live badge: busy, awaiting input, or idle. It
 supports the common agents (Claude, Codex, Copilot) through hooks it installs, works locally and
 over SSH, and drives notifications so you know the moment an agent needs you.
 
 ### The CLI and deeplinks
 
-Drive the app from any terminal, script, or other tool. The `supacode` CLI manages worktrees,
+Drive the app from any terminal, script, or other tool. The `kelpie` CLI manages worktrees,
 tabs, splits, and repos, and every session exports its repo, worktree, tab, and surface IDs, so
-commands default to the session you run them in. Deeplinks (`supacode://...`) mirror the CLI, so
+commands default to the session you run them in. Deeplinks (`kelpie://...`) mirror the CLI, so
 you can bind an action to a hotkey or fire it from another app.
 
 ### More
@@ -78,8 +78,8 @@ you can bind an action to a hotkey or fire it from another app.
 ## Quick start
 
 ```bash
-git clone --recursive git@github.com:supabitapp/supacode.git
-cd supacode
+git clone --recursive git@github.com:ObserverMoment/kelpie.git
+cd kelpie
 mise install
 make doctor    # check every build prerequisite and print fixes for anything missing
 make run-app   # build and launch the Debug app

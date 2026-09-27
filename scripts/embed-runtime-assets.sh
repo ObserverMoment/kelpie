@@ -5,14 +5,14 @@ destination_root="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 git_wt_source="${SRCROOT}/Resources/git-wt/wt"
 git_wt_patch="${SRCROOT}/patches/git-wt/git-wt-canonical-worktree-path.patch"
 zmx_source="${SRCROOT}/.build/zmx/bin/zmx"
-light_theme_source="${SRCROOT}/supacode/Resources/Themes/Supacode Light"
-dark_theme_source="${SRCROOT}/supacode/Resources/Themes/Supacode Dark"
+light_theme_source="${SRCROOT}/kelpie/Resources/Themes/Kelpie Light"
+dark_theme_source="${SRCROOT}/kelpie/Resources/Themes/Kelpie Dark"
 git_wt_destination_dir="${destination_root}/git-wt"
 zmx_destination_dir="${destination_root}/zmx"
 bin_destination_dir="${destination_root}/bin"
 cli_candidates=(
-  "${BUILT_PRODUCTS_DIR}/supacode"
-  "${UNINSTALLED_PRODUCTS_DIR}/${PLATFORM_NAME}/supacode"
+  "${BUILT_PRODUCTS_DIR}/kelpie"
+  "${UNINSTALLED_PRODUCTS_DIR}/${PLATFORM_NAME}/kelpie"
 )
 
 cli_source=""
@@ -24,7 +24,7 @@ for candidate in "${cli_candidates[@]}"; do
 done
 
 if [ -z "${cli_source}" ]; then
-  echo "error: missing built supacode executable" >&2
+  echo "error: missing built kelpie executable" >&2
   exit 1
 fi
 
@@ -49,6 +49,6 @@ fi
 chmod +x "${git_wt_destination_dir}/wt"
 /bin/cp -f "${zmx_source}" "${zmx_destination_dir}/zmx"
 chmod +x "${zmx_destination_dir}/zmx"
-/bin/cp -f "${light_theme_source}" "${destination_root}/Supacode Light"
-/bin/cp -f "${dark_theme_source}" "${destination_root}/Supacode Dark"
-/bin/cp -f "${cli_source}" "${bin_destination_dir}/supacode"
+/bin/cp -f "${light_theme_source}" "${destination_root}/Kelpie Light"
+/bin/cp -f "${dark_theme_source}" "${destination_root}/Kelpie Dark"
+/bin/cp -f "${cli_source}" "${bin_destination_dir}/kelpie"

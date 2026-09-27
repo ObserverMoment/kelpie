@@ -44,4 +44,4 @@ Closes #<!-- issue number, e.g. Closes #123 -->
 - [ ] This pull request is linked to an issue with `Closes #` above.
 - [ ] For a feature, the linked issue is labeled `ready`.
 - [ ] I am the author of this work and accountable for it; no commit is authored or co-authored by an AI agent.
-- [ ] I have read the [Contributing guide](https://github.com/supabitapp/supacode/blob/main/CONTRIBUTING.md) and the [Code of Conduct](https://github.com/supabitapp/supacode/blob/main/CODE_OF_CONDUCT.md).
+- [ ] I have read the [Contributing guide](https://github.com/ObserverMoment/kelpie/blob/main/CONTRIBUTING.md) and the [Code of Conduct](https://github.com/ObserverMoment/kelpie/blob/main/CODE_OF_CONDUCT.md).
