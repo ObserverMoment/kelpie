@@ -20,7 +20,10 @@ final class GhosttyRuntime {
   private static var liveAppBits: Set<UInt> = []
   private static var liveSurfaceBits: Set<UInt> = []
 
-  final class SurfaceReference: Hashable {
+  // Nonisolated so its deinit is plain: `closeSurface()` drops the last
+  // reference inside the reducer's task-local scope, where a MainActor
+  // (isolated) deinit aborts as an invalid free (#784).
+  nonisolated final class SurfaceReference: Hashable {
     let surface: ghostty_surface_t
 
     init(_ surface: ghostty_surface_t) {

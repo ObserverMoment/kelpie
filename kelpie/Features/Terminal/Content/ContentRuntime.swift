@@ -64,8 +64,15 @@ final class ContentRuntime {
   /// whose claim must stay current, and a stale entry can never block a
   /// fresh host, which claims on creation.
   func remove(_ id: ContentID, tombstone: Bool) {
-    contents[id]?.tearDown()
-    contents[id] = nil
+    if let content = contents[id] {
+      content.tearDown()
+      contents[id] = nil
+      // Drop the last reference on the next main-queue turn: removal runs on
+      // the reducer turn, where an isolated deinit (the content's, its
+      // chrome's) aborts as an invalid free inside the task-local scope (#784).
+      let retained = Unmanaged.passRetained(content as AnyObject)
+      DispatchQueue.main.async { retained.release() }
+    }
     guard tombstone else { return }
     pendingKill.insert(id)
   }
