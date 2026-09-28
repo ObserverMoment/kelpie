@@ -4,8 +4,8 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "Phosphor.png",
-          "name" : "Phosphor"
+          "image-name" : "TTY.png",
+          "name" : "TTY"
         }
       ],
       "shadow" : {
