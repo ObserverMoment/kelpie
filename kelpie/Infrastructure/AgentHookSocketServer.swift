@@ -19,6 +19,14 @@ private nonisolated let socketLogger = KelpieLogger("AgentHookSocket")
 final class AgentHookSocketServer {
   private(set) var socketPath: String?
 
+  /// Mirrored in the CLI's `SocketDiscovery`; Kelpie Dev keeps its own
+  /// directory so neither app's CLI or stale-socket pruning sees the other.
+  #if DEBUG
+    private static let socketDirectoryPrefix = "kelpie-dev"
+  #else
+    private static let socketDirectoryPrefix = "kelpie"
+  #endif
+
   /// Cancellation flag for the accept-loop thread; shared by reference so the
   /// thread never retains `self`.
   private let listenStopped = LockIsolated(false)
@@ -38,7 +46,7 @@ final class AgentHookSocketServer {
     } else {
       let uid = getuid()
       let pid = ProcessInfo.processInfo.processIdentifier
-      directory = "/tmp/kelpie-\(uid)"
+      directory = "/tmp/\(Self.socketDirectoryPrefix)-\(uid)"
       path = "\(directory)/pid-\(pid)"
     }
 
@@ -436,7 +444,7 @@ final class AgentHookSocketServer {
     case .query(let resource, let params):
       return .query(resource: resource, params: params, clientFD: -1)
     case .command(let deeplink, _):
-      guard let url = URL(string: deeplink), url.scheme == "kelpie" else {
+      guard let url = URL(string: deeplink), DeeplinkClient.acceptedSchemes.contains(url.scheme ?? "") else {
         socketLogger.warning("Invalid CLI deeplink URL: \(deeplink)")
         return nil
       }

@@ -46,7 +46,7 @@ TEST_RESULT_BUNDLE := build/kelpie-tests.xcresult
 SELECT_DEVELOPER_DIR = DEVELOPER_DIR="$$(./scripts/select-developer-dir.sh)"; export DEVELOPER_DIR
 
 .DEFAULT_GOAL := help
-.PHONY: doctor preflight build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build archive export-archive format lint check test bump-version bump-and-release log-stream
+.PHONY: doctor preflight build-ghostty-xcframework build-zmx generate-project generate-project-sources inspect-dependencies warm-cache build-app run-app install-dev-build build-release-app install-release-build archive export-archive format lint check test bump-version bump-and-release log-stream
 
 ifdef CI
 TUIST_INSTALL_FLAGS := --force-resolved-versions
@@ -119,28 +119,43 @@ run-app: build-app # Build then launch (Debug) with log streaming
 	exec_name="$$(echo "$$settings" | jq -r '.[0].buildSettings.EXECUTABLE_NAME')"; \
 	"$$build_dir/$$product/Contents/MacOS/$$exec_name"
 
-install-dev-build: build-app # Install the dev build to /Applications and relaunch it
+# Quits the installed app, replaces it with the $(1) configuration build, and relaunches it.
+# $(2) overrides the installed bundle name (Debug installs beside Release as "Kelpie Dev.app").
+define install_built_app
+@$(SELECT_DEVELOPER_DIR); \
+settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration $(1) -derivedDataPath "$(DERIVED_DATA_PATH)" -showBuildSettings -json 2>/dev/null)"; \
+build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
+product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
+src="$$build_dir/$$product"; \
+dst="/Applications/$(or $(2),$$product)"; \
+if [ ! -d "$$src" ]; then \
+	echo "app not found: $$src"; \
+	exit 1; \
+fi; \
+bundle_id="$$(echo "$$settings" | jq -r '.[0].buildSettings.PRODUCT_BUNDLE_IDENTIFIER')"; \
+if pgrep -f "$$dst/Contents/MacOS/" >/dev/null; then \
+	echo "quitting $$product"; \
+	osascript -e "quit app id \"$$bundle_id\"" >/dev/null 2>&1 || pkill -f "$$dst/Contents/MacOS/"; \
+	while pgrep -f "$$dst/Contents/MacOS/" >/dev/null; do sleep 0.2; done; \
+fi; \
+echo "copying $$src -> $$dst"; \
+rm -rf "$$dst"; \
+ditto "$$src" "$$dst"; \
+echo "installed $$dst"; \
+open "$$dst"
+endef
+
+install-dev-build: build-app # Install the dev build to /Applications as Kelpie Dev and relaunch it
+	$(call install_built_app,Debug,Kelpie Dev.app)
+
+# Ad-hoc signing has no Team ID, so hardened-runtime library validation would
+# refuse to load the embedded frameworks (Sparkle) at launch. `archive` keeps it.
+build-release-app: $(TUIST_RELEASE_GENERATION_STAMP) # Build the macOS app (Release, signed to run locally)
 	@$(SELECT_DEVELOPER_DIR); \
-	settings="$$(xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Debug -derivedDataPath "$(DERIVED_DATA_PATH)" -showBuildSettings -json 2>/dev/null)"; \
-	build_dir="$$(echo "$$settings" | jq -r '.[0].buildSettings.BUILT_PRODUCTS_DIR')"; \
-	product="$$(echo "$$settings" | jq -r '.[0].buildSettings.FULL_PRODUCT_NAME')"; \
-	src="$$build_dir/$$product"; \
-	dst="/Applications/$$product"; \
-	if [ ! -d "$$src" ]; then \
-		echo "app not found: $$src"; \
-		exit 1; \
-	fi; \
-	bundle_id="$$(echo "$$settings" | jq -r '.[0].buildSettings.PRODUCT_BUNDLE_IDENTIFIER')"; \
-	if pgrep -f "$$dst/Contents/MacOS/" >/dev/null; then \
-		echo "quitting $$product"; \
-		osascript -e "quit app id \"$$bundle_id\"" >/dev/null 2>&1 || pkill -f "$$dst/Contents/MacOS/"; \
-		while pgrep -f "$$dst/Contents/MacOS/" >/dev/null; do sleep 0.2; done; \
-	fi; \
-	echo "copying $$src -> $$dst"; \
-	rm -rf "$$dst"; \
-	ditto "$$src" "$$dst"; \
-	echo "installed $$dst"; \
-	open "$$dst"
+	bash -o pipefail -c 'xcodebuild -workspace "$(PROJECT_WORKSPACE)" -scheme "$(APP_SCHEME)" -configuration Release -derivedDataPath "$(DERIVED_DATA_PATH)" build ENABLE_HARDENED_RUNTIME=NO -skipMacroValidation $(XCODEBUILD_FLAGS) 2>&1 | { mise exec -- xcbeautify --disable-logging || cat; }'
+
+install-release-build: build-release-app # Install the Release build to /Applications and relaunch it
+	$(call install_built_app,Release)
 
 archive: $(TUIST_RELEASE_GENERATION_STAMP) # Archive Release build for distribution
 	mkdir -p build

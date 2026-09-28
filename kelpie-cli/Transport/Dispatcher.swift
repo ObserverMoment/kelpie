@@ -48,7 +48,11 @@ nonisolated enum Dispatcher {
   private static func launchApp() throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = ["-a", "Kelpie"]
+    #if DEBUG
+      process.arguments = ["-b", "com.observermoment.kelpie.dev"]
+    #else
+      process.arguments = ["-b", "com.observermoment.kelpie"]
+    #endif
     let stderrPipe = Pipe()
     process.standardError = stderrPipe
     try process.run()

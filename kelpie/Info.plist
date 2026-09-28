@@ -7,15 +7,15 @@
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
+	<string>$(ASSETCATALOG_COMPILER_APPICON_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleDisplayName</key>
-	<string>Kelpie</string>
+	<string>$(KELPIE_APP_NAME)</string>
 	<key>CFBundleName</key>
-	<string>Kelpie</string>
+	<string>$(KELPIE_APP_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -74,7 +74,7 @@
 			<string>com.observermoment.kelpie.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>kelpie</string>
+				<string>$(KELPIE_URL_SCHEME)</string>
 			</array>
 		</dict>
 	</array>

@@ -28,7 +28,17 @@ public nonisolated enum KelpiePaths {
       root = FileManager.default.homeDirectoryForCurrentUser
         .appending(path: ".config", directoryHint: .isDirectory)
     }
-    return root.appending(path: "kelpie", directoryHint: .isDirectory)
+    return root.appending(path: configDirectoryName, directoryHint: .isDirectory)
+  }
+
+  /// Debug builds run as "Kelpie Dev" beside the Release app, so they keep
+  /// their own config.
+  private static var configDirectoryName: String {
+    #if DEBUG
+      "kelpie-dev"
+    #else
+      "kelpie"
+    #endif
   }
 
   public static func repositoryDirectory(for rootURL: URL) -> URL {

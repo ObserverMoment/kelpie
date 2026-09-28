@@ -21,7 +21,11 @@ nonisolated enum SocketDiscovery {
   /// Throws when the directory exists but cannot be read (e.g. permission denied).
   static func listAll() throws -> [String] {
     let uid = getuid()
-    let directory = "/tmp/kelpie-\(uid)"
+    #if DEBUG
+      let directory = "/tmp/kelpie-dev-\(uid)"
+    #else
+      let directory = "/tmp/kelpie-\(uid)"
+    #endif
     let entries: [String]
     do {
       entries = try FileManager.default.contentsOfDirectory(atPath: directory)

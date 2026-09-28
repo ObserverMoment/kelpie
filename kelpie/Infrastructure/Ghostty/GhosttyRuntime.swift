@@ -712,8 +712,15 @@ final class GhosttyRuntime {
     return candidates.lazy.compactMap { $0 as? String }.first { !$0.isEmpty }
   }
 
+  /// `$TMPDIR` is per user, not per app, so Kelpie Dev writes its own files.
+  #if DEBUG
+    private static let tempConfigPrefix = "kelpie-dev"
+  #else
+    private static let tempConfigPrefix = "kelpie"
+  #endif
+
   private static func loadBundledOverrides(into config: ghostty_config_t) {
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("kelpie-defaults.conf")
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(tempConfigPrefix)-defaults.conf")
     do {
       try bundledOverridesString.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {
@@ -738,7 +745,8 @@ final class GhosttyRuntime {
     .filter { !$0.isEmpty }
     .joined(separator: "\n")
     guard !contents.isEmpty else { return }
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("kelpie-app-overrides.conf")
+    let tempURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(tempConfigPrefix)-app-overrides.conf")
     do {
       try contents.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {
@@ -778,7 +786,7 @@ final class GhosttyRuntime {
       background-opacity = 0.9
       background-blur = true
       """
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("kelpie-theme.conf")
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(tempConfigPrefix)-theme.conf")
     do {
       try contents.write(to: tempURL, atomically: true, encoding: .utf8)
     } catch {

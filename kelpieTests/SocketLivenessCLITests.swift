@@ -46,7 +46,8 @@ struct SocketLivenessCLITests {
     // fixture entries are additive and ignore any concurrently running app.
     // Caveat: a Kelpie build predating the EPERM-aware prune sweeping the
     // directory mid-test would delete `pid-1` and flake this test.
-    let directory = "/tmp/kelpie-\(getuid())"
+    // Tests run the Debug (Kelpie Dev) CLI, which lists its own directory.
+    let directory = "/tmp/kelpie-dev-\(getuid())"
     try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
     let livePid = "pid-\(ProcessInfo.processInfo.processIdentifier)"
     let fixtures = ["pid-1", "pid-999999999", "pid-abc", "pid-0", "garbage", livePid]

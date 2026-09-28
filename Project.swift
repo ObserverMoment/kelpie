@@ -20,6 +20,7 @@ let ghosttyFingerprintInputScript = """
 
 let appResources: ResourceFileElements = [
   "kelpie/AppIcon.icon",
+  "kelpie/AppIconDev.icon",
   "kelpie/Assets.xcassets",
   "kelpie/notification.wav",
 ]
@@ -312,11 +313,20 @@ let project = Project(
           "LD_RUNPATH_SEARCH_PATHS": "$(inherited) @executable_path/../Frameworks",
           "OTHER_LDFLAGS": "$(inherited) -lc++",
         ],
+        // Debug builds install as "Kelpie Dev" beside the Release app; the
+        // runtime side of the split keys off `DEBUG` (config dir, zmx prefix,
+        // CLI socket dir and symlink).
         debug: [
           "CODE_SIGN_ENTITLEMENTS": "kelpie/kelpieDebug.entitlements",
+          "PRODUCT_BUNDLE_IDENTIFIER": "com.observermoment.kelpie.dev",
+          "KELPIE_APP_NAME": "Kelpie Dev",
+          "KELPIE_URL_SCHEME": "kelpie-dev",
+          "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIconDev",
         ],
         release: [
           "CODE_SIGN_ENTITLEMENTS": "kelpie/kelpie.entitlements",
+          "KELPIE_APP_NAME": "Kelpie",
+          "KELPIE_URL_SCHEME": "kelpie",
         ],
         defaultSettings: .essential
       )

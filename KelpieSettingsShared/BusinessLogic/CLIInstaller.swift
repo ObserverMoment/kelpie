@@ -1,7 +1,11 @@
 import Foundation
 
 nonisolated struct CLIInstaller {
-  private static let installPath = "/usr/local/bin/kelpie"
+  #if DEBUG
+    private static let installPath = "/usr/local/bin/kelpie-dev"
+  #else
+    private static let installPath = "/usr/local/bin/kelpie"
+  #endif
 
   /// Returns the path to the CLI binary inside the app bundle.
   static var bundledCLIPath: String? {

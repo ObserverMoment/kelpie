@@ -4,6 +4,10 @@ import KelpieSettingsShared
 
 struct DeeplinkClient: Sendable {
   var parse: @Sendable (URL) -> Deeplink?
+
+  /// The CLI always sends `kelpie://` over its app's socket; Kelpie Dev also
+  /// registers `kelpie-dev://` so outside opens reach the right app.
+  nonisolated static let acceptedSchemes: Set<String> = ["kelpie", "kelpie-dev"]
 }
 
 extension DeeplinkClient: DependencyKey {
@@ -24,7 +28,7 @@ private nonisolated enum DeeplinkParser {
   private static let logger = KelpieLogger("Deeplink")
 
   static func parse(_ url: URL) -> Deeplink? {
-    guard url.scheme == "kelpie" else {
+    guard DeeplinkClient.acceptedSchemes.contains(url.scheme ?? "") else {
       logger.debug("Ignoring non-kelpie URL: \(url.scheme ?? "nil")")
       return nil
     }

@@ -8,7 +8,7 @@ import Testing
 struct ZmxSessionIDTests {
   @Test func makeProducesStablePrefixAndLowercaseUUID() {
     let surface = UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF")!
-    #expect(ZmxSessionID.make(surfaceID: surface) == "kelp-deadbeef-dead-beef-dead-beefdeadbeef")
+    #expect(ZmxSessionID.make(surfaceID: surface) == ZmxSessionID.prefix + "deadbeef-dead-beef-dead-beefdeadbeef")
   }
 
   @Test func makeFitsWithinDefaultSocketBudget() {
@@ -191,40 +191,40 @@ struct ZmxResolveLaunchTests {
 @MainActor
 struct ZmxSessionListParserTests {
   @Test func parsesClientsZero() {
-    let entries = ZmxSessionListParser.parse("name=kelp-abc\tpid=123\tclients=0\tcreated=0\n")
-    #expect(entries == [.init(name: "kelp-abc", clients: 0)])
+    let entries = ZmxSessionListParser.parse("name=\(ZmxSessionID.prefix)abc\tpid=123\tclients=0\tcreated=0\n")
+    #expect(entries == [.init(name: "\(ZmxSessionID.prefix)abc", clients: 0)])
   }
 
   @Test func parsesClientsPositive() {
-    let entries = ZmxSessionListParser.parse("name=kelp-abc\tpid=123\tclients=2\tcreated=0\n")
-    #expect(entries == [.init(name: "kelp-abc", clients: 2)])
+    let entries = ZmxSessionListParser.parse("name=\(ZmxSessionID.prefix)abc\tpid=123\tclients=2\tcreated=0\n")
+    #expect(entries == [.init(name: "\(ZmxSessionID.prefix)abc", clients: 2)])
   }
 
   @Test func errOrStatusLineYieldsNilClients() {
     let entries = ZmxSessionListParser.parse(
-      "name=kelp-abc\terr=ConnectionRefused\tstatus=cleaning up\n"
+      "name=\(ZmxSessionID.prefix)abc\terr=ConnectionRefused\tstatus=cleaning up\n"
     )
-    #expect(entries == [.init(name: "kelp-abc", clients: nil)])
+    #expect(entries == [.init(name: "\(ZmxSessionID.prefix)abc", clients: nil)])
   }
 
   @Test func stripsCurrentSessionArrowPrefix() {
-    let entries = ZmxSessionListParser.parse("→ name=kelp-abc\tpid=1\tclients=1\tcreated=0\n")
-    #expect(entries == [.init(name: "kelp-abc", clients: 1)])
+    let entries = ZmxSessionListParser.parse("→ name=\(ZmxSessionID.prefix)abc\tpid=1\tclients=1\tcreated=0\n")
+    #expect(entries == [.init(name: "\(ZmxSessionID.prefix)abc", clients: 1)])
   }
 
   @Test func stripsLeadingIndentOnNonCurrentSessions() {
-    let entries = ZmxSessionListParser.parse("  name=kelp-abc\tclients=0\tpid=1\tcreated=0\n")
-    #expect(entries == [.init(name: "kelp-abc", clients: 0)])
+    let entries = ZmxSessionListParser.parse("  name=\(ZmxSessionID.prefix)abc\tclients=0\tpid=1\tcreated=0\n")
+    #expect(entries == [.init(name: "\(ZmxSessionID.prefix)abc", clients: 0)])
   }
 
   @Test func filtersNonKelpSessions() {
     let entries = ZmxSessionListParser.parse(
       """
       name=dev\tpid=1\tclients=2\tcreated=0
-      name=kelp-abc\tpid=2\tclients=0\tcreated=0
+      name=\(ZmxSessionID.prefix)abc\tpid=2\tclients=0\tcreated=0
       """
     )
-    #expect(entries == [.init(name: "kelp-abc", clients: 0)])
+    #expect(entries == [.init(name: "\(ZmxSessionID.prefix)abc", clients: 0)])
   }
 
   @Test func dropsBlankAndMalformedLines() {
@@ -232,11 +232,11 @@ struct ZmxSessionListParserTests {
       """
 
       garbage with no equals
-      name=kelp-keep\tpid=9\tclients=3\tcreated=0
+      name=\(ZmxSessionID.prefix)keep\tpid=9\tclients=3\tcreated=0
 
       """
     )
-    #expect(entries == [.init(name: "kelp-keep", clients: 3)])
+    #expect(entries == [.init(name: "\(ZmxSessionID.prefix)keep", clients: 3)])
   }
 }
 

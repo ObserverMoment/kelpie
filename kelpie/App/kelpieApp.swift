@@ -147,6 +147,11 @@ struct KelpieApp: App {
     if let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("ghostty") {
       setenv("GHOSTTY_RESOURCES_DIR", resourceURL.path, 1)
     }
+    // Launched from inside a Kelpie terminal (e.g. `make install-dev-build`),
+    // the app inherits that shell's `ZMX_SESSION`. `zmx attach` then treats
+    // every surface as nested and switches the launcher's pane to the new
+    // session instead of attaching.
+    unsetenv("ZMX_SESSION")
     GhosttyCLI.argv.withUnsafeBufferPointer { buffer in
       let argc = UInt(max(0, buffer.count - 1))
       let argv = UnsafeMutablePointer(mutating: buffer.baseAddress)

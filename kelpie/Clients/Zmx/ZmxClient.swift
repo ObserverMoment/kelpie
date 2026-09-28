@@ -330,7 +330,13 @@ nonisolated enum ZmxSessionListParser {
 /// is 104, default socket dir is ~58); `kelp-<UUID>` lands at 41, leaving
 /// headroom for a longer custom `ZMX_DIR`.
 nonisolated enum ZmxSessionID {
-  static let prefix = "kelp-"
+  /// Same length in both builds so the socket budget holds; distinct so each
+  /// app's orphan reaper only ever sees its own sessions.
+  #if DEBUG
+    static let prefix = "kdev-"
+  #else
+    static let prefix = "kelp-"
+  #endif
 
   static func make(surfaceID: UUID) -> String {
     prefix + surfaceID.uuidString.lowercased()
