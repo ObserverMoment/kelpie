@@ -312,7 +312,7 @@ extension View {
   }
 }
 
-/// Status item label: the app icon's "SC" monogram plus the unread count. A
+/// Status item label: the app icon's kelpie head glyph plus the unread count. A
 /// status item renders only an image and text, so the count is text, not a
 /// badge; the glyph is template-rendered so it tints to the menu bar.
 struct MenuBarNotificationsLabel: View {
