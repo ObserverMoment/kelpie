@@ -400,12 +400,13 @@ struct PaneStripView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       // Tab split zones over the whole content region, so a dormant pane
-      // still takes tab drops. They only hit-test during a tab drag, so file
-      // drags reach the terminal beneath the rest of the time.
+      // still takes tab drops. Mounted only during a tab drag: while mounted,
+      // SwiftUI claims AppKit file drags over the left zone even with hit
+      // testing off, so files dropped there bounce instead of reaching the
+      // terminal beneath.
       .overlay {
-        if context == .embedded, let dragModel {
+        if context == .embedded, let dragModel, dragModel.isTabDragActive {
           PaneSplitDropZones(pane: pane, store: store, dragModel: dragModel)
-            .allowsHitTesting(dragModel.isTabDragActive)
         }
       }
       // Focus-follows-mouse. Click-through sensor over the content region only,

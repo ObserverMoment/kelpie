@@ -28,8 +28,8 @@ nonisolated struct PaneTabDragPayload: Codable, Sendable, Transferable {
   var sourceTabID: TabID?
   var spanTarget: SpanTarget?
 
-  /// True while a tab drag is in flight. The pane split zones use this to
-  /// stay out of hit testing otherwise, so file drags reach the terminal.
+  /// True while a tab drag is in flight. The pane split zones mount only then,
+  /// so file drags reach the terminal the rest of the time.
   var isTabDragActive: Bool { sourceTabID != nil }
 
   struct SpanTarget: Equatable {
