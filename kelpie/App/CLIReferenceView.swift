@@ -35,6 +35,7 @@ struct CLIReferenceView: View {
       CLISection(title: "Surface (deprecated)", rows: Self.surfaceRows)
       CLISection(title: "Repository", rows: Self.repoRows)
       CLISection(title: "Settings", rows: Self.settingsRows)
+      CLISection(title: "Pod", rows: Self.podRows)
       CLISection(title: "Socket", rows: Self.socketRows)
 
       CLISection(title: "Flags", rows: Self.flagRows)
@@ -169,6 +170,13 @@ struct CLIReferenceView: View {
       command: "kelpie settings repo scripts [-r <id>]",
       description: "Open repository Scripts settings."
     ),
+  ]
+
+  private static let podRows: [CLIEntry] = [
+    .init(
+      command: "kelpie pod register --name <name> [-s <id>]",
+      description: "Report an agent's messaging name to its pod. Kelpie's pod prompt asks agents to run it."
+    )
   ]
 
   private static let socketRows: [CLIEntry] = [

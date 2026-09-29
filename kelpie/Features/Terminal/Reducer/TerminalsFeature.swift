@@ -59,6 +59,12 @@ struct TerminalsFeature {
     /// Visible tabs already sent a wake; cleared when the renderer appears or
     /// the tab hides again, so a failed wake cannot loop.
     var wakeRequestedTabs: Set<TabID> = []
+    /// Surfaces in an agent pod. Pods deliver prompts into them, so they stay
+    /// live: they never hibernate and wake if found hibernated.
+    var podSurfaceIDs: Set<UUID> = []
+    /// Pod members mounted in the open pod workspace. Their hosts skip
+    /// occluding them when their worktree is not selected.
+    var podWorkspaceSurfaceIDs: Set<UUID> = []
   }
 
   enum Action {
@@ -85,6 +91,8 @@ struct TerminalsFeature {
     /// The system reported memory pressure: drop the recency budget to the
     /// selection and hibernate the hidden tabs now, skipping the grace window.
     case memoryPressureWarning
+    /// Pod membership or the open pod workspace changed.
+    case podSurfacesChanged(members: Set<UUID>, workspace: Set<UUID>)
   }
 
   private static let logger = KelpieLogger("TerminalsFeature")
@@ -162,6 +170,12 @@ struct TerminalsFeature {
       case .memoryPressureWarning:
         return reduceMemoryPressureWarning(&state)
 
+      case .podSurfacesChanged(let members, let workspace):
+        state.podWorkspaceSurfaceIDs = workspace
+        guard state.podSurfaceIDs != members else { return .none }
+        state.podSurfaceIDs = members
+        return reconcileHibernation(&state)
+
       case .layoutsHydrated(let file):
         state.layoutsAreReadOnly = file.schemaVersion > LayoutsFile.currentSchemaVersion
         // The runtime keys globally by content id and hibernation by tab id, so
@@ -201,9 +215,13 @@ struct TerminalsFeature {
 
 extension TerminalsFeature {
   /// Whether a tab is hidden: everything except the selected tab of a pane
-  /// that shows content somewhere.
-  private static func isTabHidden(_ tab: TabItem, pane: Pane, paneShowsContent: Bool) -> Bool {
-    !(paneShowsContent && pane.selectedTabID == tab.id)
+  /// that shows content somewhere. A pod member's tab never counts as hidden,
+  /// since the pod delivers prompts into it.
+  private static func isTabHidden(
+    _ tab: TabItem, pane: Pane, paneShowsContent: Bool, podSurfaceIDs: Set<UUID>
+  ) -> Bool {
+    guard !podSurfaceIDs.contains(tab.content.id.rawValue) else { return false }
+    return !(paneShowsContent && pane.selectedTabID == tab.id)
   }
 
   /// Whether a pane's area renders: the selected worktree's visible panes
@@ -268,7 +286,8 @@ extension TerminalsFeature {
         )
         for tab in pane.tabs {
           allTabs.insert(tab.id)
-          let isHidden = Self.isTabHidden(tab, pane: pane, paneShowsContent: showsContent)
+          let isHidden = Self.isTabHidden(
+            tab, pane: pane, paneShowsContent: showsContent, podSurfaceIDs: state.podSurfaceIDs)
           if isHidden {
             state.wakeRequestedTabs.remove(tab.id)
             // Recency keeps the top worktrees' visible tabs live, so a flip back
@@ -352,7 +371,8 @@ extension TerminalsFeature {
           in: layout,
           visiblePanes: visiblePanes,
           selectedWorktreeID: state.selectedWorktreeID
-        )
+        ),
+        podSurfaceIDs: state.podSurfaceIDs
       ),
       // Recency can cover a tab after its timer armed; the fire-time gate must
       // agree with the arm-time one or a protected tab still hibernates.
@@ -406,7 +426,10 @@ extension TerminalsFeature {
       for pane in layout.layout.panes {
         let showsContent = Self.paneShowsContent(
           pane, in: layout, visiblePanes: visiblePanes, selectedWorktreeID: state.selectedWorktreeID)
-        for tab in pane.tabs where Self.isTabHidden(tab, pane: pane, paneShowsContent: showsContent) {
+        for tab in pane.tabs
+        where Self.isTabHidden(
+          tab, pane: pane, paneShowsContent: showsContent, podSurfaceIDs: state.podSurfaceIDs)
+        {
           guard contentRuntime.content(for: tab.content.id)?.isHibernatable == true else { continue }
           // Cancel the pending grace timer and hibernate through the fire-time
           // action, which re-checks visibility just before teardown so a tab the

@@ -743,4 +743,38 @@ struct TerminalsFeatureTests {
       $0.layouts = [LayoutFeature.State(id: Worktree.ID("/tmp/good"), layout: good)]
     }
   }
+
+  // MARK: - Pods.
+
+  @Test(.dependencies) func aPodMembersHiddenTabNeverArms() async {
+    @Shared(.settingsFile) var settingsFile
+    $settingsFile.withLock { $0.global.terminalHibernationEnabled = true }
+    let harness = makeHibernationHarness()
+    let member = harness.hiddenContent.id.rawValue
+    await harness.store.send(.podSurfacesChanged(members: [member], workspace: [member])) {
+      $0.podSurfaceIDs = [member]
+      $0.podWorkspaceSurfaceIDs = [member]
+      // Nothing is selected yet, so only the non-member tab counts as hidden.
+      $0.hibernationArmedTabs = [harness.selectedTab]
+    }
+    await harness.store.send(.selectedWorktreeChanged(harness.worktreeID)) {
+      $0.selectedWorktreeID = harness.worktreeID
+      $0.recentWorktreeIDs = [harness.worktreeID]
+      $0.hibernationArmedTabs = []
+    }
+    // Leaving the pod makes it an ordinary hidden tab again.
+    await harness.store.send(.podSurfacesChanged(members: [], workspace: [])) {
+      $0.podSurfaceIDs = []
+      $0.podWorkspaceSurfaceIDs = []
+      $0.hibernationArmedTabs = [harness.hiddenTab]
+    }
+    await harness.clock.advance(by: TerminalsFeature.hibernationGraceWindow)
+    await harness.store.receive(\.hibernationGraceElapsed) {
+      $0.hibernationArmedTabs = []
+    }
+    await harness.store.receive(\.layouts) {
+      $0.layouts[id: harness.worktreeID]?.renderEpoch = 1
+    }
+    #expect(harness.hiddenContent.renderer == nil)
+  }
 }

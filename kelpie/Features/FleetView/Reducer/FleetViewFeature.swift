@@ -8,9 +8,23 @@ import KelpieSettingsShared
 /// delegates.
 @Reducer
 struct FleetViewFeature {
+  /// What the overlay shows.
+  enum Mode: Hashable, Sendable {
+    case fleet
+    case pods
+    /// One pod's members side by side, full window.
+    case podWorkspace(PodID)
+  }
+
   @ObservableState
   struct State: Equatable {
     var isPresented = false
+    var mode: Mode = .fleet
+
+    var isShowingPodWorkspace: Bool {
+      guard isPresented, case .podWorkspace = mode else { return false }
+      return true
+    }
     var structure: FleetViewStructure = .empty
     var focusedCardID: FleetCardID?
     var columnCount = 1
@@ -54,7 +68,11 @@ struct FleetViewFeature {
   }
 
   enum Action: Equatable {
+    /// Shows Fleet mode, or closes the overlay when Fleet mode is showing.
     case toggle
+    /// Shows Pods mode, or closes the overlay when Pods mode is showing.
+    case togglePods
+    case modeChanged(Mode)
     case dismiss
     case columnCountChanged(Int)
     case moveFocus(FleetViewNavigation.Direction)
@@ -79,14 +97,22 @@ struct FleetViewFeature {
     Reduce { state, action in
       switch action {
       case .toggle:
-        guard !state.isPresented else { return .send(.dismiss) }
-        state.isPresented = true
-        state.focusedCardID = state.structure.allCards.first?.id
+        return Self.toggle(.fleet, state: &state)
+
+      case .togglePods:
+        return Self.toggle(.pods, state: &state)
+
+      case .modeChanged(let mode):
+        state.mode = mode
         return .none
 
       case .dismiss:
         guard state.isPresented else { return .none }
         state.isPresented = false
+        // Reopening lands on the pod list, not a workspace left open.
+        if case .podWorkspace = state.mode {
+          state.mode = .pods
+        }
         return .send(.delegate(.dismissed))
 
       case .columnCountChanged(let count):
@@ -94,14 +120,14 @@ struct FleetViewFeature {
         return .none
 
       case .moveFocus(let direction):
-        guard state.isPresented else { return .none }
+        guard state.isPresented, state.mode == .fleet else { return .none }
         state.focusedCardID = FleetViewNavigation.move(
           from: state.focusedCardID, direction,
           sections: state.structure.sectionCardIDs, columnCount: state.columnCount)
         return .none
 
       case .activateFocusedCard:
-        guard state.isPresented, let card = state.focusedCard else { return .none }
+        guard state.isPresented, state.mode == .fleet, let card = state.focusedCard else { return .none }
         return Self.open(card, state: &state)
 
       case .cardTapped(let id):
@@ -134,6 +160,15 @@ struct FleetViewFeature {
         return .none
       }
     }
+  }
+
+  private static func toggle(_ mode: Mode, state: inout State) -> Effect<Action> {
+    guard !(state.isPresented && state.mode == mode) else { return .send(.dismiss) }
+    state.mode = mode
+    guard !state.isPresented else { return .none }
+    state.isPresented = true
+    state.focusedCardID = state.structure.allCards.first?.id
+    return .none
   }
 
   private static func open(_ card: FleetViewStructure.Card, state: inout State) -> Effect<Action> {

@@ -95,6 +95,9 @@ final class WorktreeTerminalManager {
   /// Holds `.idle` long enough to collapse PostToolUse/PreToolUse busy/idle alternation
   /// into a sustained busy; stays sub-perceptible for the badge clearing at end-of-session.
   private static let idleHookDebounceDuration: Duration = .milliseconds(400)
+  /// Gap between a delivered prompt's paste and its Return, so an agent TUI
+  /// that buffers a paste does not swallow the submit.
+  private static let promptSubmitDelay: Duration = .milliseconds(250)
 
   private struct IdleDebounceKey: Hashable {
     let surfaceID: UUID
@@ -722,6 +725,9 @@ final class WorktreeTerminalManager {
     host.notificationsEnabled = notificationsEnabled
     host.layout = { [weak self] in self?.layoutState(for: worktree.id)?.layout }
     host.windowedPaneIDs = { [weak self] in self?.layoutState(for: worktree.id)?.windowedPaneIDs ?? [] }
+    host.podWorkspaceSurfaceIDs = { [weak self] in
+      self?.appStore?.withState { $0.terminals.podWorkspaceSurfaceIDs } ?? []
+    }
     host.sendLayoutAction = { [weak self] action in self?.sendLayout(worktree.id, action) }
     host.setWorktreeSelected(selectedWorktreeID == worktree.id)
     host.hibernationAgentsBySurface = { [weak self] in self?.currentAgentsBySurface?() ?? [:] }
@@ -1992,6 +1998,32 @@ final class WorktreeTerminalManager {
   /// Indicator and projection updates propagate via each state's notification
   /// callbacks. Every state is swept, not just the unread ones, so a surface
   /// whose unseen mirror drifted out of sync with its notifications is repaired.
+  /// Types a prompt into a live surface without focusing it: the text goes
+  /// in as a paste, then Return submits it on the next beat so the agent's
+  /// paste handling settles first. False when the surface has no live
+  /// renderer, so the caller keeps the prompt queued.
+  func deliverPrompt(_ text: String, toSurfaceID surfaceID: UUID) -> Bool {
+    let contentID = ContentID(rawValue: surfaceID)
+    guard let surface = ContentRuntime.liveValue.renderer(for: contentID) as? GhosttySurfaceView else {
+      terminalLogger.warning("deliverPrompt: surface \(surfaceID) has no live renderer.")
+      return false
+    }
+    surface.sendText(text)
+    Task { @MainActor [clock] in
+      try? await clock.sleep(for: Self.promptSubmitDelay)
+      (ContentRuntime.liveValue.renderer(for: contentID) as? GhosttySurfaceView)?.sendReturnKey()
+    }
+    return true
+  }
+
+  /// Re-derives occlusion and focus in every worktree, for changes that are
+  /// not a layout action (the pod workspace opening or closing).
+  func reassertAllSurfaceActivity() {
+    for host in hosts.values {
+      host.reassertSurfaceActivity()
+    }
+  }
+
   func markAllNotificationsRead() {
     let unread = hosts.values.count(where: \.hasUnseenNotification)
     terminalLogger.info("markAllNotificationsRead: clearing unread in \(unread) worktree(s).")

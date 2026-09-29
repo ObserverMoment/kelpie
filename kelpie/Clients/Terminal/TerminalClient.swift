@@ -44,6 +44,12 @@ struct TerminalClient {
     @MainActor @Sendable (
       _ agentsBySurface: [UUID: [TerminalLayoutSnapshot.SurfaceAgentRecord]]
     ) -> Void
+  /// Types a prompt into a surface and submits it, without focusing or
+  /// selecting anything. False when the surface has no live renderer.
+  var deliverPrompt: @MainActor @Sendable (_ surfaceID: UUID, _ text: String) -> Bool
+  /// Re-derives occlusion and focus in every worktree after a change that is
+  /// not a layout action, such as the pod workspace opening or closing.
+  var reassertSurfaceActivity: @MainActor @Sendable () -> Void
 
   enum Command: Equatable {
     case createTab(
@@ -186,7 +192,9 @@ extension TerminalClient: DependencyKey {
     hasInflightBlockingScripts: { fatalError("TerminalClient.hasInflightBlockingScripts not configured") },
     terminateAllSessions: { fatalError("TerminalClient.terminateAllSessions not configured") },
     reapOrphanSessions: { _ in fatalError("TerminalClient.reapOrphanSessions not configured") },
-    saveLayoutsWithAgents: { _ in fatalError("TerminalClient.saveLayoutsWithAgents not configured") }
+    saveLayoutsWithAgents: { _ in fatalError("TerminalClient.saveLayoutsWithAgents not configured") },
+    deliverPrompt: { _, _ in fatalError("TerminalClient.deliverPrompt not configured") },
+    reassertSurfaceActivity: { fatalError("TerminalClient.reassertSurfaceActivity not configured") }
   )
 
   static let testValue = TerminalClient(
@@ -210,7 +218,9 @@ extension TerminalClient: DependencyKey {
     hasInflightBlockingScripts: unimplemented("TerminalClient.hasInflightBlockingScripts", placeholder: false),
     terminateAllSessions: unimplemented("TerminalClient.terminateAllSessions"),
     reapOrphanSessions: unimplemented("TerminalClient.reapOrphanSessions"),
-    saveLayoutsWithAgents: unimplemented("TerminalClient.saveLayoutsWithAgents")
+    saveLayoutsWithAgents: unimplemented("TerminalClient.saveLayoutsWithAgents"),
+    deliverPrompt: unimplemented("TerminalClient.deliverPrompt", placeholder: false),
+    reassertSurfaceActivity: unimplemented("TerminalClient.reassertSurfaceActivity")
   )
 }
 

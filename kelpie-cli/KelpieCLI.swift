@@ -13,6 +13,7 @@ struct KelpieCLI: ParsableCommand {
       SurfaceCommand.self,
       RepoCommand.self,
       SettingsCommand.self,
+      PodCommand.self,
       SocketCommand.self,
     ],
     defaultSubcommand: OpenCommand.self

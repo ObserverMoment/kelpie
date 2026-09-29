@@ -190,6 +190,12 @@ nonisolated enum DeeplinkURLBuilder {
     "kelpie://settings/repo/\(repoID)/scripts"
   }
 
+  // MARK: - Pod.
+
+  static func podRegister(surfaceID: String, name: String) -> String {
+    "kelpie://pod/register?surface=\(percentEncodeQueryValue(surfaceID))&name=\(percentEncodeQueryValue(name))"
+  }
+
   // MARK: - Helpers.
 
   private static func percentEncodeQueryValue(_ value: String) -> String {

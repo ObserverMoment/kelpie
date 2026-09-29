@@ -301,6 +301,10 @@ struct WorktreeDetailView: View {
           )
           store.send(.repositories(.requestDeleteSidebarItems([target])))
         }
+      } else if store.fleetView.isShowingPodWorkspace {
+        // The pod workspace holds the members' surfaces. Unmounting the layout
+        // lets it remount and reclaim its surfaces when the workspace closes.
+        Color.clear
       } else if let selectedWorktree {
         let shouldFocusTerminal = repositories.shouldFocusTerminal(for: selectedWorktree.id)
         let pendingTerminalFocus: Worktree.ID? = shouldFocusTerminal ? selectedWorktree.id : nil
@@ -353,6 +357,10 @@ struct WorktreeDetailView: View {
     // (isEnabled, token) dedup keeps AppKit from rebuilding the menu.
     let hasFocusedTab = Self.hasFocusedTab(in: state, worktreeID: state.repositories.selectedWorktreeID)
     let hasRunningRunScript = state.hasRunningRunScript
+    // The pod workspace shows other worktrees' terminals, so layout commands,
+    // which act on the selected worktree, are off while it is up.
+    let isPodWorkspace = state.fleetView.isShowingPodWorkspace
+    let actsOnLayout = hasActiveWorktree && !isPodWorkspace
     return
       content
       // Open is enabled only when the resolved editor can open the selection
@@ -367,47 +375,51 @@ struct WorktreeDetailView: View {
       .focusedSceneAction(\.toggleInspectorPaneAction, enabled: hasActiveWorktree) { pane in
         store.send(.repositories(.toggleInspectorPane(pane)))
       }
-      .focusedSceneAction(\.newTerminalAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.newTerminalAction, enabled: actsOnLayout) {
         store.send(.newTerminal)
       }
       // Lock and validity are enforced by the terminal model, so this only gates on an active worktree.
-      .focusedSceneAction(\.renameTabAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.renameTabAction, enabled: actsOnLayout) {
         store.send(.renameSelectedTerminalTab)
       }
-      .focusedAction(\.splitTerminalAction, enabled: hasActiveWorktree) { direction in
+      .focusedAction(\.splitTerminalAction, enabled: actsOnLayout) { direction in
         store.send(.splitTerminal(direction))
       }
-      .focusedSceneAction(\.toggleWindowModeAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.toggleWindowModeAction, enabled: actsOnLayout) {
         store.send(.toggleWindowModeForFocusedPane)
       }
-      .focusedAction(\.toggleSplitZoomAction, enabled: hasActiveWorktree) {
+      .focusedAction(\.toggleSplitZoomAction, enabled: actsOnLayout) {
         store.send(.toggleSplitZoom)
       }
-      .focusedAction(\.equalizeSplitsAction, enabled: hasActiveWorktree) {
+      .focusedAction(\.equalizeSplitsAction, enabled: actsOnLayout) {
         store.send(.equalizeSplits)
       }
-      .focusedAction(\.focusSplitAction, enabled: hasActiveWorktree) { direction in
+      .focusedAction(\.focusSplitAction, enabled: actsOnLayout) { direction in
         store.send(.focusSplit(direction))
       }
-      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree && hasFocusedTab) {
+      // Still enabled in the pod workspace, so Cmd-W does nothing there
+      // instead of falling through to Close Window.
+      .focusedAction(\.closeTabAction, enabled: hasActiveWorktree && hasFocusedTab, token: isPodWorkspace) {
+        guard !isPodWorkspace else { return }
         store.send(.closeTab)
       }
-      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree && hasFocusedTab) {
+      .focusedAction(\.closeSurfaceAction, enabled: hasActiveWorktree && hasFocusedTab, token: isPodWorkspace) {
+        guard !isPodWorkspace else { return }
         store.send(.closeSurface)
       }
-      .focusedSceneAction(\.startSearchAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.startSearchAction, enabled: actsOnLayout) {
         store.send(.startSearch)
       }
-      .focusedSceneAction(\.searchSelectionAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.searchSelectionAction, enabled: actsOnLayout) {
         store.send(.searchSelection)
       }
-      .focusedSceneAction(\.navigateSearchNextAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.navigateSearchNextAction, enabled: actsOnLayout) {
         store.send(.navigateSearchNext)
       }
-      .focusedSceneAction(\.navigateSearchPreviousAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.navigateSearchPreviousAction, enabled: actsOnLayout) {
         store.send(.navigateSearchPrevious)
       }
-      .focusedSceneAction(\.runScriptAction, enabled: hasActiveWorktree) {
+      .focusedSceneAction(\.runScriptAction, enabled: actsOnLayout) {
         store.send(.runScript)
       }
       .focusedSceneAction(\.stopRunScriptAction, enabled: hasRunningRunScript) {
@@ -632,7 +644,7 @@ struct WorktreeDetailView: View {
     var body: some ToolbarContent {
       // Leading in every detail state so history stays reachable while a worktree loads.
       ToolbarItem(placement: .navigation) {
-        FleetViewToolbarButton(store: store)
+        ViewSwitcherToolbarControl(store: store)
       }
       ToolbarItem(placement: .navigation) {
         WorktreeHistoryToolbarButtonsHost(repositoriesStore: repositoriesStore)

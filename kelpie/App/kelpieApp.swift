@@ -321,7 +321,9 @@ struct KelpieApp: App {
         },
         saveLayoutsWithAgents: { agentsBySurface in
           terminalManager.saveAllLayoutSnapshots(agentsBySurface: agentsBySurface)
-        }
+        },
+        deliverPrompt: { terminalManager.deliverPrompt($1, toSurfaceID: $0) },
+        reassertSurfaceActivity: { terminalManager.reassertAllSurfaceActivity() }
       )
       values.worktreeInfoWatcher = WorktreeInfoWatcherClient(
         send: { command in

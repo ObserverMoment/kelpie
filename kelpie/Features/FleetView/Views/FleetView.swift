@@ -2,11 +2,14 @@ import ComposableArchitecture
 import KelpieSettingsShared
 import SwiftUI
 
-/// Full-window overview of every live agent session, grouped like the sidebar.
-/// Mounted as an overlay over the split view so the terminals stay hosted; the
-/// key monitor lives in `ContentView`, outside this conditionally mounted view.
+/// Full-window overview of every live agent session, grouped like the sidebar,
+/// or of the agent pods, or one pod's workspace. Mounted as an overlay over the
+/// split view so the terminals stay hosted; the key monitor lives in
+/// `ContentView`, outside this conditionally mounted view.
 struct FleetView: View {
   @Bindable var store: StoreOf<FleetViewFeature>
+  let podsStore: StoreOf<PodsFeature>
+  let terminalsStore: StoreOf<TerminalsFeature>
   let runtime: ContentRuntime
 
   private static let horizontalPadding: CGFloat = 32
@@ -15,11 +18,25 @@ struct FleetView: View {
   static let symbolName = "square.grid.2x2"
 
   var body: some View {
+    if case .podWorkspace(let podID) = store.mode {
+      PodWorkspaceView(
+        podsStore: podsStore, terminalsStore: terminalsStore, podID: podID, runtime: runtime
+      ) {
+        store.send(.modeChanged(.pods))
+      }
+    } else {
+      overview
+    }
+  }
+
+  private var overview: some View {
     VStack(alignment: .leading, spacing: 0) {
       header
       Divider()
       Group {
-        if store.structure.isEmpty {
+        if store.mode == .pods {
+          PodsView(store: podsStore)
+        } else if store.structure.isEmpty {
           ContentUnavailableView(
             "No Active Agent Sessions",
             systemImage: Self.symbolName,
@@ -48,16 +65,32 @@ struct FleetView: View {
   /// the header is visibly separate and the pickers never overlap the title.
   private var header: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Label {
-        Text("Fleet View")
-      } icon: {
-        Image(systemName: Self.symbolName)
-          .foregroundStyle(.secondary)
-          .accessibilityHidden(true)
+      HStack(spacing: 16) {
+        Label {
+          Text(store.mode == .pods ? "Pods" : "Fleet View")
+        } icon: {
+          Image(systemName: store.mode == .pods ? PodsView.symbolName : Self.symbolName)
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+        }
+        .appFont(.title, weight: .semibold)
+        Spacer(minLength: 0)
+        Picker("View", selection: Binding(get: { store.mode }, set: { store.send(.modeChanged($0)) })) {
+          Label("Fleet", systemImage: Self.symbolName).tag(FleetViewFeature.Mode.fleet)
+          Label("Pods", systemImage: PodsView.symbolName).tag(FleetViewFeature.Mode.pods)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Switch between Fleet View and Pods")
       }
-      .appFont(.title, weight: .semibold)
       HStack {
-        FleetLauncherView(store: store)
+        if store.mode == .pods {
+          Button("New Pod", systemImage: "plus") { podsStore.send(.newPodTapped) }
+            .help("Create a pod from running Claude Code sessions")
+        } else {
+          FleetLauncherView(store: store)
+        }
         Spacer(minLength: 0)
       }
     }

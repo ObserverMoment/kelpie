@@ -9,7 +9,8 @@ extension AppFeature.Action {
     switch self {
     case .repositories(let inner):
       return !inner.cacheInvalidations.isEmpty
-    case .agentPresence, .terminals, .fleetView(.toggle):
+    // Pods add the pod-name caption and feed Pods mode, which the same pass computes.
+    case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .pods:
       return true
     case .fleetView, .settings, .updates, .commandPalette, .terminalEvent:
       return false

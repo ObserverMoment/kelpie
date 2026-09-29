@@ -104,7 +104,7 @@ struct FleetSessionCardView: View, Equatable {
 }
 
 extension AgentPresenceFeature.Activity {
-  fileprivate var fleetLabel: String {
+  var fleetLabel: String {
     switch self {
     case .busy: "Working"
     case .idle: "Idle"

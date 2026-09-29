@@ -175,6 +175,14 @@ kelpie settings repo [-r <id>]     # Open repository settings.
 kelpie settings repo scripts [-r <id>]  # Open repository Scripts settings.
 ```
 
+### Pod
+
+```
+kelpie pod register --name <session name> [-s <id>]  # Report your messaging name to your agent pod.
+```
+
+Run `pod register` only when a `[Kelpie]` pod prompt asks you to. Kelpie then sends every member the pod roster.
+
 ### Socket
 
 ```

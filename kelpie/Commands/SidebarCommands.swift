@@ -5,6 +5,8 @@ import SwiftUI
 struct SidebarCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleFleetViewAction) private var toggleFleetViewAction
+  @FocusedValue(\.togglePodsViewAction) private var togglePodsViewAction
+  @FocusedValue(\.showStandardViewAction) private var showStandardViewAction
   @FocusedValue(\.revealInSidebarAction) private var revealInSidebarAction
   @FocusedValue(\.expandAllSidebarGroupsAction) private var expandAllSidebarGroupsAction
   @FocusedValue(\.collapseAllSidebarGroupsAction) private var collapseAllSidebarGroupsAction
@@ -20,6 +22,8 @@ struct SidebarCommands: Commands {
     let overrides = settingsFile.global.shortcutOverrides
     let toggleLeftSidebar = AppShortcuts.toggleLeftSidebar.effective(from: overrides)
     let toggleFleetView = AppShortcuts.toggleFleetView.effective(from: overrides)
+    let togglePodsView = AppShortcuts.togglePodsView.effective(from: overrides)
+    let showStandardView = AppShortcuts.showStandardView.effective(from: overrides)
     let revealInSidebar = AppShortcuts.revealInSidebar.effective(from: overrides)
     let expandAll = AppShortcuts.expandAllSidebarGroups.effective(from: overrides)
     let collapseAll = AppShortcuts.collapseAllSidebarGroups.effective(from: overrides)
@@ -39,6 +43,18 @@ struct SidebarCommands: Commands {
       .appKeyboardShortcut(toggleFleetView)
       .help("Toggle Fleet View: every active agent session at a glance (\(toggleFleetView?.display ?? "none"))")
       .disabled(toggleFleetViewAction?.isEnabled != true)
+      Button("Pods", systemImage: PodsView.symbolName) {
+        togglePodsViewAction?()
+      }
+      .appKeyboardShortcut(togglePodsView)
+      .help("Toggle Pods: your agent pods and their members (\(togglePodsView?.display ?? "none"))")
+      .disabled(togglePodsViewAction?.isEnabled != true)
+      Button("Home", systemImage: ViewSwitcherToolbarControl.homeSymbolName) {
+        showStandardViewAction?()
+      }
+      .appKeyboardShortcut(showStandardView)
+      .help("Show Home: the sidebar and terminals (\(showStandardView?.display ?? "none"))")
+      .disabled(showStandardViewAction?.isEnabled != true)
       Button("Reveal in Sidebar") {
         revealInSidebarAction?()
       }
@@ -105,6 +121,14 @@ private struct ToggleFleetViewActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct TogglePodsViewActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
+private struct ShowStandardViewActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct RevealInSidebarActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -130,6 +154,16 @@ extension FocusedValues {
   var toggleFleetViewAction: FocusedAction<Void>? {
     get { self[ToggleFleetViewActionKey.self] }
     set { self[ToggleFleetViewActionKey.self] = newValue }
+  }
+
+  var togglePodsViewAction: FocusedAction<Void>? {
+    get { self[TogglePodsViewActionKey.self] }
+    set { self[TogglePodsViewActionKey.self] = newValue }
+  }
+
+  var showStandardViewAction: FocusedAction<Void>? {
+    get { self[ShowStandardViewActionKey.self] }
+    set { self[ShowStandardViewActionKey.self] = newValue }
   }
 
   var revealInSidebarAction: FocusedAction<Void>? {

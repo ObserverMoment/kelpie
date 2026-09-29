@@ -93,6 +93,7 @@ struct AppFeature {
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
     var fleetView = FleetViewFeature.State()
+    var pods = PodsFeature.State()
     /// Terminal-orchestration state. Owns the per-tab feature collection so
     /// tab-bar views scope through `\.terminals` (narrow) instead of the full
     /// app store. Mirrors sidebar's `RepositoriesFeature` ownership pattern.
@@ -295,6 +296,7 @@ struct AppFeature {
     case updates(UpdatesFeature.Action)
     case commandPalette(CommandPaletteFeature.Action)
     case fleetView(FleetViewFeature.Action)
+    case pods(PodsFeature.Action)
     case openActionSelectionChanged(OpenWorktreeAction)
     /// Re-sweep LaunchServices. Activation is not enough on its own: an editor can be
     /// installed from a Kelpie terminal (`brew install --cask …`), which never takes
@@ -453,6 +455,7 @@ struct AppFeature {
         return .merge(
           agentPresenceFanOutEffect(surfaces: surfaces, state: state),
           imagePasteAgentFanOutEffect(surfaces: surfaces, state: state),
+          podActivityFanOutEffect(surfaces: surfaces, state: state),
           .run { [clock] _ in
             try await clock.sleep(for: .seconds(1))
             await MainActor.run {
@@ -1733,7 +1736,7 @@ struct AppFeature {
           .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
         )
 
-      case .fleetView(.toggle):
+      case .fleetView(.toggle), .fleetView(.togglePods):
         // Seed the launcher with the selected worktree before the child opens
         // (the child reducer runs after this arm).
         if !state.fleetView.isPresented {
@@ -1742,6 +1745,16 @@ struct AppFeature {
         return .none
 
       case .fleetView:
+        return .none
+
+      case .pods(.delegate(.openWorkspace(let podID))):
+        return .send(.fleetView(.modeChanged(.podWorkspace(podID))))
+
+      case .pods(.delegate(.podRemoved(let podID))):
+        guard state.fleetView.mode == .podWorkspace(podID) else { return .none }
+        return .send(.fleetView(.modeChanged(.pods)))
+
+      case .pods:
         return .none
 
       case .commandPalette(.delegate(.dismissedWithoutSelection)):
@@ -2164,6 +2177,9 @@ struct AppFeature {
     Scope(state: \.fleetView, action: \.fleetView) {
       FleetViewFeature()
     }
+    Scope(state: \.pods, action: \.pods) {
+      PodsFeature()
+    }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
     }
@@ -2196,15 +2212,46 @@ struct AppFeature {
             sidebarItems: state.repositories.sidebarItems,
             repositories: state.repositories.repositories,
             presence: state.agentPresence,
-            layouts: state.terminals.layouts
+            layouts: state.terminals.layouts,
+            podNameBySurface: PodStructure.podNames(state.pods.pods)
           )
         )
       )
+      state.pods.applyStructure(
+        PodStructure.compute(pods: state.pods.pods, cards: state.fleetView.structure.allCards))
       return .none
+    }
+    Reduce { state, action in
+      // Pod members stay live and the open workspace's members stay unoccluded;
+      // push both sets into the terminals whenever pods or the overlay change.
+      switch action {
+      case .pods, .fleetView: break
+      default: return .none
+      }
+      let members = state.pods.memberSurfaceIDs
+      let workspace = state.podWorkspaceSurfaceIDs
+      guard members != state.terminals.podSurfaceIDs || workspace != state.terminals.podWorkspaceSurfaceIDs
+      else { return .none }
+      return .concatenate(
+        .send(.terminals(.podSurfacesChanged(members: members, workspace: workspace))),
+        .run { _ in await terminalClient.reassertSurfaceActivity() }
+      )
     }
   }
 
   // MARK: - Agent presence fan-out.
+
+  /// Tells the pods about Claude activity on the surfaces they track, so a
+  /// queued prompt goes out once its agent is idle.
+  private func podActivityFanOutEffect(surfaces: Set<UUID>, state: State) -> Effect<Action> {
+    let tracked = surfaces.intersection(state.pods.trackedSurfaceIDs)
+    guard !tracked.isEmpty else { return .none }
+    return .merge(
+      tracked.map { surfaceID in
+        let activity = state.agentPresence.records[.init(agent: .claude, surfaceID: surfaceID)]?.activity
+        return .send(.pods(.memberActivityChanged(surfaceID: surfaceID, activity: activity)))
+      })
+  }
 
   /// Routes `agentPresence.delegate.surfacesChanged` into per-row deltas. Each
   /// affected row gets `agentSnapshotChanged` with the badge list + activity
@@ -2492,6 +2539,25 @@ struct AppFeature {
         return .none
       }
       return .send(.settings(.setSelection(.repositoryScripts(repositoryID.rawValue))))
+    case .podRegister(let surfaceID, let sessionName):
+      // Only the agent inside the member's terminal registers, over the socket.
+      guard source == .socket, responseFD != nil else {
+        deeplinkLogger.warning("Ignoring pod register deeplink that did not come from the CLI.")
+        return .none
+      }
+      guard state.pods.podID(containing: surfaceID) != nil else {
+        state.alert = AlertState {
+          TextState("Not in a pod")
+        } actions: {
+          ButtonState(role: .cancel, action: .dismiss) {
+            TextState("OK")
+          }
+        } message: {
+          TextState("This session is not a member of an agent pod.")
+        }
+        return .none
+      }
+      return .send(.pods(.registered(surfaceID: surfaceID, sessionName: sessionName)))
     }
   }
 

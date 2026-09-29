@@ -38,6 +38,7 @@ struct DeeplinkReferenceView: View {
       DeeplinkSection(title: "Surface (deprecated)", rows: Self.surfaceRows)
       DeeplinkSection(title: "Repository", rows: Self.repoRows)
       DeeplinkSection(title: "Settings", rows: Self.settingsRows)
+      DeeplinkSection(title: "Pod", rows: Self.podRows)
     }
     .textSelection(.enabled)
     .formStyle(.grouped)
@@ -180,6 +181,13 @@ struct DeeplinkReferenceView: View {
       url: "kelpie://settings/repo/<repo_id>/scripts",
       description: "Open repository Scripts settings."
     ),
+  ]
+
+  private static let podRows: [DeeplinkEntry] = [
+    .init(
+      url: "kelpie://pod/register?surface=<surface_id>&name=<session_name>",
+      description: "Report a pod member's messaging name. Accepted only from the CLI socket."
+    )
   ]
 }
 

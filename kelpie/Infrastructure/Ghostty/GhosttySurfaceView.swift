@@ -2143,6 +2143,22 @@ extension GhosttySurfaceView: NSServicesMenuRequestor {
     }
   }
 
+  /// Presses and releases Return as if typed. `sendText` goes through the
+  /// paste path, so a newline inside it lands in a bracketed paste instead of
+  /// submitting the prompt.
+  func sendReturnKey() {
+    guard let surface else { return }
+    for action in [GHOSTTY_ACTION_PRESS, GHOSTTY_ACTION_RELEASE] {
+      var key = ghostty_input_key_s()
+      key.action = action
+      key.keycode = UInt32(kVK_Return)
+      key.text = nil
+      key.unshifted_codepoint = 0x0D
+      key.composing = false
+      ghostty_surface_key(surface, key)
+    }
+  }
+
   func readSelection(from pboard: NSPasteboard) -> Bool {
     guard let str = pboard.getOpinionatedStringContents() else { return false }
     let len = str.utf8CString.count

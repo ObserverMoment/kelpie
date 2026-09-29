@@ -190,4 +190,43 @@ struct FleetViewFeatureTests {
     await store.send(.launcherWorktreeChanged(nil))
     await store.send(.launchTapped)
   }
+
+  // MARK: - Modes.
+
+  @Test(.dependencies) func togglePodsOpensPodsAndTogglingFleetSwitchesWithoutClosing() async {
+    let store = makeStore()
+    await store.send(.togglePods) {
+      $0.isPresented = true
+      $0.mode = .pods
+    }
+    await store.send(.toggle) { $0.mode = .fleet }
+    await store.send(.toggle)
+    await store.receive(\.dismiss) { $0.isPresented = false }
+    await store.receive(\.delegate.dismissed)
+  }
+
+  @Test(.dependencies) func dismissingTheWorkspaceReopensOnThePodList() async {
+    var state = FleetViewFeature.State()
+    state.isPresented = true
+    state.mode = .podWorkspace(PodID(rawValue: UUID()))
+    let store = makeStore(state)
+    #expect(store.state.isShowingPodWorkspace)
+    await store.send(.dismiss) {
+      $0.isPresented = false
+      $0.mode = .pods
+    }
+    await store.receive(\.delegate.dismissed)
+  }
+
+  @Test(.dependencies) func cardKeysDoNothingOutsideFleetMode() async {
+    let first = card(worktreeA)
+    var state = FleetViewFeature.State()
+    state.structure = structure([[first, card(worktreeB)]])
+    state.isPresented = true
+    state.mode = .pods
+    state.focusedCardID = first.id
+    let store = makeStore(state)
+    await store.send(.moveFocus(.right))
+    await store.send(.activateFocusedCard)
+  }
 }

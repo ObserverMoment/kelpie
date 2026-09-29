@@ -24,6 +24,9 @@ final class WorktreeContentHost {
   /// Panes rendering in their own windows; their surfaces' activity keys off
   /// those windows, not the main one.
   @ObservationIgnored var windowedPaneIDs: () -> Set<PaneID> = { [] }
+  /// Pod members mounted in the pod workspace. Like windowed panes, their own
+  /// window drives visibility, so leaving the worktree never occludes them.
+  @ObservationIgnored var podWorkspaceSurfaceIDs: () -> Set<UUID> = { [] }
   /// Routes a topology mutation into the worktree's `LayoutFeature`.
   @ObservationIgnored var sendLayoutAction: (LayoutFeature.Action) -> Void = { _ in }
   @ObservationIgnored var onNotificationReceived: ((UUID, String, String, Bool) -> Void)?
@@ -650,10 +653,19 @@ final class WorktreeContentHost {
     let selected = isWorktreeSelected
     let visiblePanes = Set(layout.tree.visibleLeaves())
     let windowedPanes = windowedPaneIDs()
+    let workspaceSurfaces = podWorkspaceSurfaceIDs()
     var focusTarget: GhosttySurfaceView?
     for pane in layout.panes {
       for tab in pane.tabs {
         guard let surface = liveSurface(tab.content.id.rawValue) else { continue }
+        if workspaceSurfaces.contains(tab.content.id.rawValue) {
+          // The workspace shows every member side by side, across worktrees,
+          // so first responder, not this worktree's focused pane, is focus.
+          let window = surface.window
+          surface.setOcclusion(window.map { $0.isVisible && $0.occlusionState.contains(.visible) } != false)
+          surface.focusDidChange(window?.isKeyWindow == true && window?.firstResponder === surface)
+          continue
+        }
         let isSelectedTab = pane.selectedTabID == tab.id
         let isVisible: Bool
         let isKeyed: Bool
@@ -703,10 +715,11 @@ final class WorktreeContentHost {
   func setAllSurfacesOccluded() {
     guard let layout = layout() else { return }
     let windowedPanes = windowedPaneIDs()
+    let workspaceSurfaces = podWorkspaceSurfaceIDs()
     for pane in layout.panes {
       // A windowed pane keeps rendering across worktree switches.
       guard !windowedPanes.contains(pane.id) else { continue }
-      for tab in pane.tabs {
+      for tab in pane.tabs where !workspaceSurfaces.contains(tab.content.id.rawValue) {
         guard let surface = liveSurface(tab.content.id.rawValue) else { continue }
         surface.setOcclusion(false)
         surface.focusDidChange(false)

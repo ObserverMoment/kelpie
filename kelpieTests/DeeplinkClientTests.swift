@@ -766,4 +766,20 @@ struct DeeplinkClientTests {
     let url = URL(string: "kelpie://unknown/something")!
     #expect(parse(url) == nil)
   }
+
+  // MARK: - Pod.
+
+  @Test func podRegisterParsesSurfaceAndName() {
+    let surfaceID = UUID()
+    let url = URL(string: "kelpie://pod/register?surface=\(surfaceID.uuidString)&name=kelpie-70")!
+    #expect(parse(url) == .podRegister(surfaceID: surfaceID, sessionName: "kelpie-70"))
+  }
+
+  @Test func podRegisterWithoutANameOrWithABadSurfaceReturnsNil() {
+    let surfaceID = UUID().uuidString
+    #expect(parse(URL(string: "kelpie://pod/register?surface=\(surfaceID)")!) == nil)
+    #expect(parse(URL(string: "kelpie://pod/register?surface=\(surfaceID)&name=%20")!) == nil)
+    #expect(parse(URL(string: "kelpie://pod/register?surface=nope&name=kelpie-70")!) == nil)
+    #expect(parse(URL(string: "kelpie://pod/other?surface=\(surfaceID)&name=kelpie-70")!) == nil)
+  }
 }

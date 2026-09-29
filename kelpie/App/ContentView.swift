@@ -50,6 +50,8 @@ struct ContentView: View {
       if store.fleetView.isPresented {
         FleetView(
           store: store.scope(state: \.fleetView, action: \.fleetView),
+          podsStore: store.scope(state: \.pods, action: \.pods),
+          terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           runtime: ContentRuntime.liveValue
         )
         .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
@@ -62,11 +64,19 @@ struct ContentView: View {
     .focusedSceneAction(\.toggleFleetViewAction, enabled: true) {
       store.send(.fleetView(.toggle))
     }
+    .focusedSceneAction(\.togglePodsViewAction, enabled: true) {
+      store.send(.fleetView(.togglePods))
+    }
+    .focusedSceneAction(\.showStandardViewAction, enabled: store.fleetView.isPresented) {
+      store.send(.fleetView(.dismiss))
+    }
     // Lives here, not inside the overlay: the overlay leaves the tree the moment
     // Fleet View closes, so only a permanently mounted host can deactivate the
     // monitor for the exit transition.
     .background {
-      FleetViewKeyMonitor(isActive: store.fleetView.isPresented) { decision in
+      // Off in the pod workspace: its terminals take every keystroke, Escape included.
+      FleetViewKeyMonitor(isActive: store.fleetView.isPresented && !store.fleetView.isShowingPodWorkspace) {
+        decision in
         switch decision {
         case .move(let direction): store.send(.fleetView(.moveFocus(direction)))
         case .activate: store.send(.fleetView(.activateFocusedCard))

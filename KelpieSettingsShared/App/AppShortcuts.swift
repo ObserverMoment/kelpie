@@ -7,7 +7,7 @@ import SwiftUI
 // Compile-time checkable shortcut identifier.
 public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRepresentable {
   case commandPalette, worktreeSwitcher, openSettings, checkForUpdates, showMainWindow
-  case toggleLeftSidebar, revealInSidebar, toggleFleetView
+  case toggleLeftSidebar, revealInSidebar, toggleFleetView, togglePodsView, showStandardView
   case expandAllSidebarGroups, collapseAllSidebarGroups
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
   case deleteWorktree, confirmWorktreeAction
@@ -53,6 +53,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .toggleLeftSidebar: "toggleLeftSidebar"
     case .revealInSidebar: "revealInSidebar"
     case .toggleFleetView: "toggleFleetView"
+    case .togglePodsView: "togglePodsView"
+    case .showStandardView: "showStandardView"
     case .expandAllSidebarGroups: "expandAllSidebarGroups"
     case .collapseAllSidebarGroups: "collapseAllSidebarGroups"
     case .newWorktree: "newWorktree"
@@ -112,6 +114,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "toggleLeftSidebar": .toggleLeftSidebar,
     "revealInSidebar": .revealInSidebar,
     "toggleFleetView": .toggleFleetView,
+    "togglePodsView": .togglePodsView,
+    "showStandardView": .showStandardView,
     "expandAllSidebarGroups": .expandAllSidebarGroups,
     "collapseAllSidebarGroups": .collapseAllSidebarGroups,
     "newWorktree": .newWorktree,
@@ -188,6 +192,8 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .toggleLeftSidebar: "Toggle Left Sidebar"
     case .revealInSidebar: "Reveal in Sidebar"
     case .toggleFleetView: "Toggle Fleet View"
+    case .togglePodsView: "Toggle Pods View"
+    case .showStandardView: "Show Home View"
     case .expandAllSidebarGroups: "Expand All Sidebar Groups"
     case .collapseAllSidebarGroups: "Collapse All Sidebar Groups"
     case .newWorktree: "New Worktree"
@@ -463,6 +469,8 @@ public enum AppShortcuts {
   public static let toggleLeftSidebar = AppShortcut(id: .toggleLeftSidebar, key: "[", modifiers: .command)
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
   public static let toggleFleetView = AppShortcut(id: .toggleFleetView, key: "f", modifiers: [.command, .shift])
+  public static let togglePodsView = AppShortcut(id: .togglePodsView, key: "l", modifiers: [.command, .shift])
+  public static let showStandardView = AppShortcut(id: .showStandardView, key: "h", modifiers: [.command, .shift])
   // `]` expands (opens rightward), `[` collapses, mirroring the outline-view
   // Right/Left arrow convention, and pairs with ⌘[ for the sidebar toggle.
   public static let expandAllSidebarGroups = AppShortcut(
@@ -648,7 +656,8 @@ public enum AppShortcuts {
     AppShortcutGroup(
       category: .sidebar,
       shortcuts: [
-        toggleLeftSidebar, toggleFleetView, revealInSidebar, expandAllSidebarGroups, collapseAllSidebarGroups,
+        toggleLeftSidebar, toggleFleetView, togglePodsView, showStandardView, revealInSidebar,
+        expandAllSidebarGroups, collapseAllSidebarGroups,
       ]
     ),
     AppShortcutGroup(

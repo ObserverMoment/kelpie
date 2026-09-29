@@ -29,6 +29,8 @@ struct FleetViewStructure: Equatable, Sendable {
     let model: String?
     let effort: String?
     let lastMessage: String?
+    /// The agent pod the session belongs to, if any.
+    var podName: String?
 
     var agent: SkillAgent { id.agent }
     var surfaceID: UUID { id.surfaceID }
@@ -86,6 +88,7 @@ struct FleetViewStructure: Equatable, Sendable {
     let repositories: IdentifiedArrayOf<Repository>
     let presence: AgentPresenceFeature.State
     let layouts: IdentifiedArrayOf<LayoutFeature.State>
+    var podNameBySurface: [UUID: String] = [:]
   }
 
   static func compute(_ inputs: Inputs) -> FleetViewStructure {
@@ -96,7 +99,8 @@ struct FleetViewStructure: Equatable, Sendable {
       groupIDByRepositoryID: inputs.groupIDByRepositoryID,
       sidebarItems: sidebarItems)
     let builder = CardBuilder(
-      sidebarItems: sidebarItems, repositories: repositories, presence: inputs.presence, layouts: inputs.layouts)
+      sidebarItems: sidebarItems, repositories: repositories, presence: inputs.presence, layouts: inputs.layouts,
+      podNameBySurface: inputs.podNameBySurface)
     let groupSections = placement.groups.compactMap { group -> Section? in
       let cards = group.repositories.flatMap { builder.cards(forRows: $0.rowIDs) }
       return cards.isEmpty ? nil : Section(id: .group(group.id), title: group.name, cards: cards)
@@ -201,16 +205,19 @@ private struct CardBuilder {
   let repositories: IdentifiedArrayOf<Repository>
   let layouts: IdentifiedArrayOf<LayoutFeature.State>
   let recordsBySurface: [UUID: [(agent: SkillAgent, record: AgentPresenceFeature.PresenceRecord)]]
+  let podNameBySurface: [UUID: String]
 
   init(
     sidebarItems: IdentifiedArrayOf<SidebarItemFeature.State>,
     repositories: IdentifiedArrayOf<Repository>,
     presence: AgentPresenceFeature.State,
-    layouts: IdentifiedArrayOf<LayoutFeature.State>
+    layouts: IdentifiedArrayOf<LayoutFeature.State>,
+    podNameBySurface: [UUID: String]
   ) {
     self.sidebarItems = sidebarItems
     self.repositories = repositories
     self.layouts = layouts
+    self.podNameBySurface = podNameBySurface
     recordsBySurface = presence.records.reduce(into: [:]) { grouped, entry in
       grouped[entry.key.surfaceID, default: []].append((entry.key.agent, entry.value))
     }
@@ -249,7 +256,8 @@ private struct CardBuilder {
             isFolder: row.kind == .folder,
             model: record.model,
             effort: record.effort,
-            lastMessage: lastMessage)
+            lastMessage: lastMessage,
+            podName: podNameBySurface[surfaceID])
         }
     }
   }

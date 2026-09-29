@@ -22,6 +22,8 @@ enum Deeplink: Equatable, Sendable {
   case settings(section: DeeplinkSettingsSection?)
   case settingsRepo(repositoryID: Repository.ID)
   case settingsRepoScripts(repositoryID: Repository.ID)
+  /// A pod member reports the session name its podmates message it by.
+  case podRegister(surfaceID: UUID, sessionName: String)
 
   enum WorktreeAction: Equatable, Sendable {
     case select
