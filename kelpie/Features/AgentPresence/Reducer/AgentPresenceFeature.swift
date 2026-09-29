@@ -64,7 +64,7 @@ struct AgentPresenceFeature {
     var pids: Set<pid_t>
     /// Claude's session model / effort as reported by its hooks; nil for other
     /// agents and before the first signal that carried them. Dropped with the
-    /// record; not persisted across launches.
+    /// record, and saved with it in the layout snapshot so a relaunch keeps them.
     var model: String?
     var effort: String?
   }
@@ -72,6 +72,8 @@ struct AgentPresenceFeature {
   nonisolated struct RestoredRecord: Sendable {
     let alivePids: Set<pid_t>
     let activity: Activity
+    var model: String?
+    var effort: String?
   }
 
   // `nonisolated` is load-bearing here. Without it the @Reducer macro
@@ -175,7 +177,8 @@ struct AgentPresenceFeature {
           let checked = staged.compactMapValues { stage -> RestoredRecord? in
             let alive = stage.pids.filter { Self.isAlive($0) }
             guard !alive.isEmpty else { return nil }
-            return RestoredRecord(alivePids: alive, activity: stage.activity)
+            return RestoredRecord(
+              alivePids: alive, activity: stage.activity, model: stage.model, effort: stage.effort)
           }
           guard !checked.isEmpty else { return }
           await send(.restoreFromSnapshotChecked(records: checked))
@@ -385,6 +388,8 @@ struct AgentPresenceFeature {
   struct StagedRestore: Sendable {
     let pids: Set<pid_t>
     let activity: Activity
+    var model: String?
+    var effort: String?
   }
 
   /// Build the staged-restore dict from the persisted v2 layouts file. No
@@ -415,7 +420,7 @@ struct AgentPresenceFeature {
           guard !pids.isEmpty else { continue }
           let activity = Activity(rawValue: record.activity) ?? .idle
           staged[PresenceKey(agent: agent, surfaceID: surfaceID)] =
-            StagedRestore(pids: pids, activity: activity)
+            StagedRestore(pids: pids, activity: activity, model: record.model, effort: record.effort)
         }
       }
     }
@@ -442,7 +447,8 @@ struct AgentPresenceFeature {
     for (key, record) in records {
       if state.records[key] != nil { continue }
       // Restored records always have alive pids (pid-less OSC records are dropped in stageRestore).
-      state.records[key] = PresenceRecord(activity: record.activity, pids: record.alivePids)
+      state.records[key] = PresenceRecord(
+        activity: record.activity, pids: record.alivePids, model: record.model, effort: record.effort)
       dirtySurfaces.insert(key.surfaceID)
     }
     for surfaceID in dirtySurfaces { rebuildPresence(forSurface: surfaceID, in: &state) }
@@ -472,7 +478,9 @@ extension AgentPresenceFeature.State {
       let entry = TerminalLayoutSnapshot.SurfaceAgentRecord(
         agent: key.agent.rawValue,
         pids: record.pids.sorted(),
-        activity: record.activity.rawValue
+        activity: record.activity.rawValue,
+        model: record.model,
+        effort: record.effort
       )
       result[key.surfaceID, default: []].append(entry)
     }

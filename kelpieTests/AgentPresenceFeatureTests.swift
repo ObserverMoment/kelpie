@@ -948,6 +948,34 @@ struct AgentPresenceFeatureTests {
 
   // MARK: - restoreFromSnapshot (layouts-embedded).
 
+  @Test func snapshotRoundTripKeepsModelAndEffort() {
+    // Kelpie saves presence at quit and restores it at launch; an idle Claude
+    // session must keep its model and effort until its next hook fires.
+    var harness = Harness()
+    let surfaceID = UUID()
+    harness.send(
+      .hookEventReceived(
+        makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid(),
+          data: ["model": "claude-fable-5-1", "effort": "high"])))
+    let saved = harness.state.agentsBySurface()
+
+    var relaunched = Harness()
+    relaunched.restoreFromLayouts([makeLayout(surfaces: [(id: surfaceID, agents: saved[surfaceID] ?? [])])])
+
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    #expect(relaunched.state.records[key]?.model == "claude-fable-5-1")
+    #expect(relaunched.state.records[key]?.effort == "high")
+  }
+
+  @Test func agentRecordsSavedBeforeModelAndEffortStillDecode() throws {
+    let json = Data(#"{"agent":"claude","pids":[123],"activity":"busy"}"#.utf8)
+    let record = try JSONDecoder().decode(TerminalLayoutSnapshot.SurfaceAgentRecord.self, from: json)
+    #expect(record.agent == "claude")
+    #expect(record.pids == [123])
+    #expect(record.activity == "busy")
+  }
+
   @Test func restoreFromLayoutsSeedsRecordsForSurfacesWithLivePids() {
     // Sessions zmx kept alive across quit must surface their agent badges on
     // first paint of the next launch instead of waiting for the next idle/busy
@@ -1124,7 +1152,8 @@ struct AgentPresenceFeatureTests {
       let checked = staged.compactMapValues { stage -> AgentPresenceFeature.RestoredRecord? in
         let alive = stage.pids.filter { AgentPresenceFeature.isAlive($0) }
         guard !alive.isEmpty else { return nil }
-        return AgentPresenceFeature.RestoredRecord(alivePids: alive, activity: stage.activity)
+        return AgentPresenceFeature.RestoredRecord(
+          alivePids: alive, activity: stage.activity, model: stage.model, effort: stage.effort)
       }
       guard !checked.isEmpty else { return }
       send(.restoreFromSnapshotChecked(records: checked))

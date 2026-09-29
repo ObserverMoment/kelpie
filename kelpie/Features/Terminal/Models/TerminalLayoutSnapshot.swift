@@ -95,6 +95,10 @@ nonisolated struct TerminalLayoutSnapshot: Codable, Equatable, Sendable {
     let agent: String
     let pids: [Int32]
     let activity: String
+    /// Claude's session model / effort, kept so an idle session still shows
+    /// them after a relaunch. Absent in files written before they existed.
+    var model: String?
+    var effort: String?
   }
 
 }
