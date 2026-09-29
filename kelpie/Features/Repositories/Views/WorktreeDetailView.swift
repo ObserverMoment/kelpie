@@ -643,11 +643,13 @@ struct WorktreeDetailView: View {
 
     var body: some ToolbarContent {
       // Leading in every detail state so history stays reachable while a worktree loads.
+      // One item, not two: separate `.navigation` items don't keep their declared
+      // order, and the view switcher must sit before the history arrows.
       ToolbarItem(placement: .navigation) {
-        ViewSwitcherToolbarControl(store: store)
-      }
-      ToolbarItem(placement: .navigation) {
-        WorktreeHistoryToolbarButtonsHost(repositoriesStore: repositoriesStore)
+        HStack(spacing: 8) {
+          ViewSwitcherToolbarControl(store: store)
+          WorktreeHistoryToolbarButtonsHost(repositoriesStore: repositoriesStore)
+        }
       }
 
       if showsToolbarPlaceholder {

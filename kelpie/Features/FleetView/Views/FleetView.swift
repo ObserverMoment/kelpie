@@ -62,28 +62,17 @@ struct FleetView: View {
 
   /// Title row above the launcher row, both left-aligned on a band that reads
   /// as chrome (control background) against the window background below, so
-  /// the header is visibly separate and the pickers never overlap the title.
+  /// the header is visibly separate from the cards.
   private var header: some View {
     VStack(alignment: .leading, spacing: 16) {
-      HStack(spacing: 16) {
-        Label {
-          Text(store.mode == .pods ? "Pods" : "Fleet View")
-        } icon: {
-          Image(systemName: store.mode == .pods ? PodsView.symbolName : Self.symbolName)
-            .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
-        }
-        .appFont(.title, weight: .semibold)
-        Spacer(minLength: 0)
-        Picker("View", selection: Binding(get: { store.mode }, set: { store.send(.modeChanged($0)) })) {
-          Label("Fleet", systemImage: Self.symbolName).tag(FleetViewFeature.Mode.fleet)
-          Label("Pods", systemImage: PodsView.symbolName).tag(FleetViewFeature.Mode.pods)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        .help("Switch between Fleet View and Pods")
+      Label {
+        Text(store.mode == .pods ? "Pods" : "Fleet View")
+      } icon: {
+        Image(systemName: store.mode == .pods ? PodsView.symbolName : Self.symbolName)
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
       }
+      .appFont(.title, weight: .semibold)
       HStack {
         if store.mode == .pods {
           Button("New Pod", systemImage: "plus") { podsStore.send(.newPodTapped) }

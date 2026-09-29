@@ -33,7 +33,15 @@ struct ContentView: View {
     #if DEBUG
       let _ = contentRenderLogger.info("ContentView.body re-rendered")
     #endif
-    return NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
+    let isFleetPresented = store.fleetView.isPresented
+    // Fleet and Pods collapse the sidebar column, and drop its toggle, so the
+    // sidebar's repo and folder buttons leave the toolbar and the view switcher
+    // moves up to the traffic lights. The user's own visibility is kept for Home.
+    let columnVisibility = Binding<NavigationSplitViewVisibility>(
+      get: { isFleetPresented ? .detailOnly : leftSidebarVisibility },
+      set: { if !isFleetPresented { leftSidebarVisibility = $0 } }
+    )
+    return NavigationSplitView(columnVisibility: columnVisibility) {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -43,6 +51,7 @@ struct ContentView: View {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
     }
     .navigationSplitViewStyle(.automatic)
+    .toolbar(removing: isFleetPresented ? .sidebarToggle : nil)
     .disabled(!repositoriesStore.isInitialLoadComplete)
     // Fleet View covers the split view instead of replacing it so the hosted
     // terminals are never torn down; it slides in from the sidebar's edge.
@@ -143,7 +152,7 @@ struct ContentView: View {
     ) { renameStore in
       RenameBranchView(store: renameStore)
     }
-    .focusedSceneAction(\.toggleLeftSidebarAction, enabled: true) {
+    .focusedSceneAction(\.toggleLeftSidebarAction, enabled: !store.fleetView.isPresented) {
       withAnimation(.easeOut(duration: 0.2)) {
         leftSidebarVisibility = leftSidebarVisibility == .detailOnly ? .all : .detailOnly
       }
