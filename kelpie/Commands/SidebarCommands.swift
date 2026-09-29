@@ -1,5 +1,5 @@
-import Sharing
 import KelpieSettingsShared
+import Sharing
 import SwiftUI
 
 struct SidebarCommands: Commands {
@@ -33,7 +33,7 @@ struct SidebarCommands: Commands {
       .appKeyboardShortcut(toggleLeftSidebar)
       .help("Toggle Left Sidebar (\(toggleLeftSidebar?.display ?? "none"))")
       .disabled(toggleLeftSidebarAction?.isEnabled != true)
-      Button("Fleet View", systemImage: "square.grid.2x2") {
+      Button("Fleet View", systemImage: FleetView.symbolName) {
         toggleFleetViewAction?()
       }
       .appKeyboardShortcut(toggleFleetView)

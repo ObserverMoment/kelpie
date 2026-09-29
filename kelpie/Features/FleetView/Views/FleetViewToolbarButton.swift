@@ -14,7 +14,7 @@ struct FleetViewToolbarButton: View {
     Button {
       store.send(.fleetView(.toggle))
     } label: {
-      Label("Fleet View", systemImage: "square.grid.2x2")
+      Label("Fleet View", systemImage: FleetView.symbolName)
         .symbolVariant(store.fleetView.isPresented ? .fill : .none)
     }
     .help("Fleet View: every active agent session at a glance (\(shortcut))")

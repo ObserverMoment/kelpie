@@ -11,22 +11,29 @@ struct FleetView: View {
 
   private static let horizontalPadding: CGFloat = 32
 
+  /// A fleet of ships for a water horse: the one glyph used by the header, the
+  /// toolbar button and the Sidebar menu item.
+  static let symbolName = "sailboat.fill"
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 24) {
+    VStack(alignment: .leading, spacing: 0) {
       header
-      if store.structure.isEmpty {
-        ContentUnavailableView(
-          "No Active Agent Sessions",
-          systemImage: "square.grid.2x2",
-          description: Text("Launch an agent from the menu above, or start one in a terminal.")
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else {
-        sessions
+      Divider()
+      Group {
+        if store.structure.isEmpty {
+          ContentUnavailableView(
+            "No Active Agent Sessions",
+            systemImage: Self.symbolName,
+            description: Text("Launch an agent from the menu above, or start one in a terminal.")
+          )
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+          sessions
+        }
       }
+      .padding(.horizontal, Self.horizontalPadding)
+      .padding(.top, 24)
     }
-    .padding(.horizontal, Self.horizontalPadding)
-    .padding(.vertical, 24)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .background(.windowBackground)
     .onGeometryChange(for: Int.self) { proxy in
@@ -37,18 +44,28 @@ struct FleetView: View {
     .accessibilityIdentifier("fleetView")
   }
 
-  /// Title row above the launcher row: the title stays centred and the pickers
-  /// never overlap it at narrow widths.
+  /// Title row above the launcher row, both left-aligned on the same chrome
+  /// material as the inspector, so the pickers never overlap the title at
+  /// narrow widths.
   private var header: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Fleet View")
-        .appFont(.title, weight: .semibold)
-        .frame(maxWidth: .infinity)
+      Label {
+        Text("Fleet View")
+      } icon: {
+        Image(systemName: Self.symbolName)
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+      }
+      .appFont(.title, weight: .semibold)
       HStack {
         FleetLauncherView(store: store)
         Spacer(minLength: 0)
       }
     }
+    .padding(.horizontal, Self.horizontalPadding)
+    .padding(.vertical, 20)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.bar)
   }
 
   private var sessions: some View {
