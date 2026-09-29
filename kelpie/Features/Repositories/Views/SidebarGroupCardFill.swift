@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Which slice of a group's card a row draws: the header row carries the top
-/// corners, the padding row the bottom ones, every other row a straight cut,
-/// and a collapsed group's lone header row carries all four.
+/// corners, the card's last visible row the bottom ones, every other row a
+/// straight cut, and a collapsed group's lone header row carries all four.
 enum SidebarGroupCardEdge: Equatable {
   case top, middle, bottom, single
 
@@ -35,18 +35,19 @@ struct SidebarGroupCardFill: View {
     .fill(Color.black.opacity(colorScheme == .dark ? 0.22 : 0.06))
     .padding(.horizontal, Self.horizontalInset)
     .padding(.top, edge.roundsTop ? Self.verticalInset : 0)
+    .padding(.bottom, edge.roundsBottom ? Self.verticalInset : 0)
   }
 }
 
-/// A short trailing row that gives the card its bottom padding under the
-/// last member's rows.
-struct SidebarGroupCardBottomPaddingRow: View {
-  var body: some View {
-    Color.clear
-      .frame(height: SidebarGroupCardFill.verticalInset)
-      .listRowInsets(EdgeInsets())
-      .listRowBackground(SidebarGroupCardFill(edge: .bottom))
-      .moveDisabled(true)
-      .accessibilityHidden(true)
+extension View {
+  /// Paints this row's slice of a group card when it sits inside one; rows
+  /// outside a card (`nil`) keep the sidebar's own background.
+  @ViewBuilder
+  func groupCardRowBackground(_ edge: SidebarGroupCardEdge?) -> some View {
+    if let edge {
+      listRowBackground(SidebarGroupCardFill(edge: edge))
+    } else {
+      self
+    }
   }
 }

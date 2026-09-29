@@ -1,8 +1,8 @@
 import AppKit
 import ComposableArchitecture
+import KelpieSettingsShared
 import OrderedCollections
 import Sharing
-import KelpieSettingsShared
 import SwiftUI
 
 private nonisolated let notificationLogger = KelpieLogger("Notifications")
@@ -18,6 +18,9 @@ struct SidebarItemsView: View {
   let shortcutHintByID: [Worktree.ID: String]
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  /// Set only inside a group card: the slice the repository's last visible row
+  /// draws (`.bottom` when it closes the card); every other row draws `.middle`.
+  var groupCardEdgeForLastRow: SidebarGroupCardEdge?
   @Shared(.sidebarNestWorktreesByBranch) private var nestWorktreesByBranch: Bool
 
   var body: some View {
@@ -29,7 +32,8 @@ struct SidebarItemsView: View {
       terminalManager: terminalManager,
       isRepositoryRemoving: isRepositoryRemoving,
       shortcutHintByID: shortcutHintByID,
-      nestWorktreesByBranch: nestWorktreesByBranch && repository.isGitRepository
+      nestWorktreesByBranch: nestWorktreesByBranch && repository.isGitRepository,
+      groupCardEdgeForLastRow: groupCardEdgeForLastRow
     )
   }
 }
@@ -44,6 +48,7 @@ private struct SidebarItemsDragOverlay: View {
   let isRepositoryRemoving: Bool
   let shortcutHintByID: [Worktree.ID: String]
   let nestWorktreesByBranch: Bool
+  let groupCardEdgeForLastRow: SidebarGroupCardEdge?
 
   var body: some View {
     ForEach(groups) { group in
@@ -56,7 +61,8 @@ private struct SidebarItemsDragOverlay: View {
         hideSubtitle: group.hideSubtitle,
         moveBehavior: group.moveBehavior,
         shortcutHintByID: shortcutHintByID,
-        nestWorktreesByBranch: nestWorktreesByBranch && group.supportsBranchNesting
+        nestWorktreesByBranch: nestWorktreesByBranch && group.supportsBranchNesting,
+        groupCardEdgeForLastRow: groupCardEdgeForLastRow.map { group.id == groups.last?.id ? $0 : .middle }
       )
     }
   }
@@ -72,6 +78,7 @@ private struct SidebarItemGroupView: View {
   let moveBehavior: SidebarItemGroup.MoveBehavior
   let shortcutHintByID: [Worktree.ID: String]
   let nestWorktreesByBranch: Bool
+  let groupCardEdgeForLastRow: SidebarGroupCardEdge?
 
   var body: some View {
     let bucketID = moveBehavior.bucketID
@@ -95,6 +102,10 @@ private struct SidebarItemGroupView: View {
     let shortcutHintBuilder: (SidebarItemID) -> String? = { rowID in
       shortcutHintByID[rowID]
     }
+    let lastRowID = nestedBranchRows.last?.id
+    let cardEdge: (SidebarBranchNesting.Row) -> SidebarGroupCardEdge? = { row in
+      groupCardEdgeForLastRow.map { row.id == lastRowID ? $0 : .middle }
+    }
     switch moveBehavior {
     case .disabled:
       ForEach(nestedBranchRows) { row in
@@ -109,6 +120,7 @@ private struct SidebarItemGroupView: View {
           moveMode: .alwaysDisabled,
           shortcutHint: shortcutHintBuilder
         )
+        .groupCardRowBackground(cardEdge(row))
       }
     case .pinned, .unpinned:
       if groupingActive {
@@ -124,6 +136,7 @@ private struct SidebarItemGroupView: View {
             moveMode: .alwaysDisabled,
             shortcutHint: shortcutHintBuilder
           )
+          .groupCardRowBackground(cardEdge(row))
         }
       } else {
         ForEach(nestedBranchRows) { row in
@@ -138,6 +151,7 @@ private struct SidebarItemGroupView: View {
             moveMode: .conditional,
             shortcutHint: shortcutHintBuilder
           )
+          .groupCardRowBackground(cardEdge(row))
         }
         .onMove(perform: moveRows)
       }

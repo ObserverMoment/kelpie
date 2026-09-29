@@ -90,9 +90,6 @@ struct SidebarListView: View {
             } : nil)
       }
       .listStyle(.sidebar)
-      // Only the group card's bottom padding row is shorter than the sidebar's
-      // default minimum; without this it stretches into an empty band.
-      .environment(\.defaultMinListRowHeight, SidebarGroupCardFill.verticalInset)
       .focused($isSidebarFocused)
       .frame(minWidth: 220)
       .onChange(of: groupPinnedRows, initial: false) { _, _ in
@@ -473,6 +470,7 @@ private struct SidebarRepositoryGroupSection: View {
         ForEach(members) { member in
           SidebarGroupMemberRows(
             member: member,
+            closesCard: member.id == members.last?.id,
             structure: structure,
             shortcutHintByID: shortcutHintByID,
             store: store,
@@ -486,7 +484,6 @@ private struct SidebarRepositoryGroupSection: View {
               else { return }
               store.send(.repositoriesMoved(move.offsets, move.destination))
             } : nil)
-        SidebarGroupCardBottomPaddingRow()
       }
     } header: {
       EmptyView()
@@ -499,6 +496,9 @@ private struct SidebarRepositoryGroupSection: View {
 /// contributes its single row.
 private struct SidebarGroupMemberRows: View {
   let member: SidebarStructure.Section
+  /// The last member draws the card's rounded bottom on its last visible row;
+  /// a separate padding row would be stretched to a full row by the sidebar.
+  let closesCard: Bool
   let structure: SidebarStructure
   let shortcutHintByID: [Worktree.ID: String]
   @Bindable var store: StoreOf<RepositoriesFeature>
@@ -524,25 +524,26 @@ private struct SidebarGroupMemberRows: View {
           store: store
         )
         .padding(.leading, SidebarNestLayout.groupMemberIndent)
-        .listRowBackground(SidebarGroupCardFill(edge: .middle))
+        .listRowBackground(SidebarGroupCardFill(edge: closesCard && !isExpanded ? .bottom : .middle))
         if isExpanded {
+          let hoistSummary = structure.hoistSummaryByRepositoryID[repositoryID]
           SidebarItemsView(
             repository: repository,
             groups: groups,
             shortcutHintByID: shortcutHintByID,
             store: store,
-            terminalManager: terminalManager
+            terminalManager: terminalManager,
+            groupCardEdgeForLastRow: closesCard && hoistSummary == nil ? .bottom : .middle
           )
           .padding(.leading, SidebarNestLayout.groupMemberIndent)
-          .listRowBackground(SidebarGroupCardFill(edge: .middle))
-          if let hoistSummary = structure.hoistSummaryByRepositoryID[repositoryID] {
+          if let hoistSummary {
             SidebarHoistSummaryRow(
               repositoryName: Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
               summary: hoistSummary,
               store: store
             )
             .padding(.leading, SidebarNestLayout.groupMemberIndent)
-            .listRowBackground(SidebarGroupCardFill(edge: .middle))
+            .listRowBackground(SidebarGroupCardFill(edge: closesCard ? .bottom : .middle))
           }
         }
       }
@@ -556,7 +557,7 @@ private struct SidebarGroupMemberRows: View {
           terminalManager: terminalManager
         )
         .padding(.leading, SidebarNestLayout.groupMemberIndent)
-        .listRowBackground(SidebarGroupCardFill(edge: .middle))
+        .listRowBackground(SidebarGroupCardFill(edge: closesCard ? .bottom : .middle))
       }
     case .highlight, .placeholder, .failedRepository, .environmentBlockedRepository, .repositoryGroup:
       EmptyView()
@@ -567,6 +568,11 @@ private struct SidebarGroupMemberRows: View {
 /// Group card header: disclosure chevron, folder glyph and name, and the
 /// group's ellipsis menu (revealed on hover, like a section's actions).
 private struct SidebarGroupHeaderRow: View {
+  /// Size and downward nudge of the dots inside the group folder glyph, so they
+  /// sit in the folder's body like the toolbar symbol's grid.
+  private static let groupGlyphDotsScale: CGFloat = 0.8
+  private static let groupGlyphDotsDrop: CGFloat = 1.5
+
   let groupID: RepositoryGroupID
   let name: String
   let isCollapsed: Bool
@@ -584,12 +590,17 @@ private struct SidebarGroupHeaderRow: View {
       Label {
         Text(name)
       } icon: {
-        // The toolbar's "New Group" glyph minus its plus: SF Symbols has no
-        // badge-less variant, so the badge (the first palette layer) is
-        // painted clear and the folder and grid take the foreground.
-        Image(systemName: "square.grid.3x1.folder.badge.plus")
-          .symbolRenderingMode(.palette)
-          .foregroundStyle(.clear, .primary)
+        // The toolbar's "New Group" glyph without its plus. SF Symbols has no
+        // badge-less variant and hiding the badge layer leaves its cut-out in
+        // the folder, so the dots are drawn into a whole folder instead.
+        Image(systemName: "folder")
+          .overlay {
+            Image(systemName: "ellipsis")
+              .imageScale(.small)
+              .fontWeight(.black)
+              .scaleEffect(Self.groupGlyphDotsScale)
+              .offset(y: Self.groupGlyphDotsDrop)
+          }
           .accessibilityHidden(true)
       }
       .foregroundStyle(.primary)
