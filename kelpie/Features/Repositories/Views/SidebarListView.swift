@@ -90,6 +90,9 @@ struct SidebarListView: View {
             } : nil)
       }
       .listStyle(.sidebar)
+      // Only the group card's bottom padding row is shorter than the sidebar's
+      // default minimum; without this it stretches into an empty band.
+      .environment(\.defaultMinListRowHeight, SidebarGroupCardFill.verticalInset)
       .focused($isSidebarFocused)
       .frame(minWidth: 220)
       .onChange(of: groupPinnedRows, initial: false) { _, _ in
