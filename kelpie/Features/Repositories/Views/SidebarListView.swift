@@ -582,10 +582,11 @@ private struct SidebarGroupHeaderRow: View {
         Text(name)
       } icon: {
         // The toolbar's "New Group" glyph minus its plus: SF Symbols has no
-        // badge-less variant, so the badge layer is painted clear.
+        // badge-less variant, so the badge (the first palette layer) is
+        // painted clear and the folder and grid take the foreground.
         Image(systemName: "square.grid.3x1.folder.badge.plus")
           .symbolRenderingMode(.palette)
-          .foregroundStyle(.primary, .clear)
+          .foregroundStyle(.clear, .primary)
           .accessibilityHidden(true)
       }
       .foregroundStyle(.primary)
