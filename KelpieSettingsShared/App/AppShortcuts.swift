@@ -462,7 +462,7 @@ public enum AppShortcuts {
 
   public static let toggleLeftSidebar = AppShortcut(id: .toggleLeftSidebar, key: "[", modifiers: .command)
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
-  public static let toggleFleetView = AppShortcut(id: .toggleFleetView, key: "l", modifiers: [.command, .shift])
+  public static let toggleFleetView = AppShortcut(id: .toggleFleetView, key: "f", modifiers: [.command, .shift])
   // `]` expands (opens rightward), `[` collapses, mirroring the outline-view
   // Right/Left arrow convention, and pairs with ⌘[ for the sidebar toggle.
   public static let expandAllSidebarGroups = AppShortcut(
@@ -647,7 +647,9 @@ public enum AppShortcuts {
     ),
     AppShortcutGroup(
       category: .sidebar,
-      shortcuts: [toggleLeftSidebar, toggleFleetView, revealInSidebar, expandAllSidebarGroups, collapseAllSidebarGroups]
+      shortcuts: [
+        toggleLeftSidebar, toggleFleetView, revealInSidebar, expandAllSidebarGroups, collapseAllSidebarGroups,
+      ]
     ),
     AppShortcutGroup(
       category: .worktrees,

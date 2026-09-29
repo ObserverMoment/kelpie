@@ -11,9 +11,8 @@ struct FleetView: View {
 
   private static let horizontalPadding: CGFloat = 32
 
-  /// A fleet of ships for a water horse: the one glyph used by the header, the
-  /// toolbar button and the Sidebar menu item.
-  static let symbolName = "sailboat.fill"
+  /// The one glyph used by the header, the toolbar button and the Sidebar menu item.
+  static let symbolName = "square.grid.2x2"
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -44,9 +43,9 @@ struct FleetView: View {
     .accessibilityIdentifier("fleetView")
   }
 
-  /// Title row above the launcher row, both left-aligned on the same chrome
-  /// material as the inspector, so the pickers never overlap the title at
-  /// narrow widths.
+  /// Title row above the launcher row, both left-aligned on a band that reads
+  /// as chrome (control background) against the window background below, so
+  /// the header is visibly separate and the pickers never overlap the title.
   private var header: some View {
     VStack(alignment: .leading, spacing: 16) {
       Label {
@@ -65,7 +64,7 @@ struct FleetView: View {
     .padding(.horizontal, Self.horizontalPadding)
     .padding(.vertical, 20)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.bar)
+    .background(Color(nsColor: .controlBackgroundColor))
   }
 
   private var sessions: some View {
