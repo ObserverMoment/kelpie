@@ -632,6 +632,9 @@ struct WorktreeDetailView: View {
     var body: some ToolbarContent {
       // Leading in every detail state so history stays reachable while a worktree loads.
       ToolbarItem(placement: .navigation) {
+        FleetViewToolbarButton(store: store)
+      }
+      ToolbarItem(placement: .navigation) {
         WorktreeHistoryToolbarButtonsHost(repositoriesStore: repositoriesStore)
       }
 

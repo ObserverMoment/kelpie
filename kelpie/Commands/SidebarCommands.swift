@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SidebarCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @FocusedValue(\.toggleFleetViewAction) private var toggleFleetViewAction
   @FocusedValue(\.revealInSidebarAction) private var revealInSidebarAction
   @FocusedValue(\.expandAllSidebarGroupsAction) private var expandAllSidebarGroupsAction
   @FocusedValue(\.collapseAllSidebarGroupsAction) private var collapseAllSidebarGroupsAction
@@ -18,6 +19,7 @@ struct SidebarCommands: Commands {
   var body: some Commands {
     let overrides = settingsFile.global.shortcutOverrides
     let toggleLeftSidebar = AppShortcuts.toggleLeftSidebar.effective(from: overrides)
+    let toggleFleetView = AppShortcuts.toggleFleetView.effective(from: overrides)
     let revealInSidebar = AppShortcuts.revealInSidebar.effective(from: overrides)
     let expandAll = AppShortcuts.expandAllSidebarGroups.effective(from: overrides)
     let collapseAll = AppShortcuts.collapseAllSidebarGroups.effective(from: overrides)
@@ -31,6 +33,12 @@ struct SidebarCommands: Commands {
       .appKeyboardShortcut(toggleLeftSidebar)
       .help("Toggle Left Sidebar (\(toggleLeftSidebar?.display ?? "none"))")
       .disabled(toggleLeftSidebarAction?.isEnabled != true)
+      Button("Fleet View", systemImage: "square.grid.2x2") {
+        toggleFleetViewAction?()
+      }
+      .appKeyboardShortcut(toggleFleetView)
+      .help("Toggle Fleet View: every active agent session at a glance (\(toggleFleetView?.display ?? "none"))")
+      .disabled(toggleFleetViewAction?.isEnabled != true)
       Button("Reveal in Sidebar") {
         revealInSidebarAction?()
       }
@@ -93,6 +101,10 @@ private struct ToggleLeftSidebarActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct ToggleFleetViewActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct RevealInSidebarActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -113,6 +125,11 @@ extension FocusedValues {
   var toggleLeftSidebarAction: FocusedAction<Void>? {
     get { self[ToggleLeftSidebarActionKey.self] }
     set { self[ToggleLeftSidebarActionKey.self] = newValue }
+  }
+
+  var toggleFleetViewAction: FocusedAction<Void>? {
+    get { self[ToggleFleetViewActionKey.self] }
+    set { self[ToggleFleetViewActionKey.self] = newValue }
   }
 
   var revealInSidebarAction: FocusedAction<Void>? {

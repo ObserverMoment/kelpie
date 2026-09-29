@@ -67,6 +67,24 @@ public nonisolated enum SkillAgent: String, Equatable, Sendable, CaseIterable, C
     }
   }
 
+  /// The CLI that starts the agent in a shell, or nil when it has no terminal
+  /// entry point Kelpie can launch (Antigravity).
+  public var launchCommand: String? {
+    switch self {
+    case .antigravity: nil
+    case .claude: "claude"
+    case .codex: "codex"
+    case .copilot: "copilot"
+    case .grok: "grok"
+    case .hermes: "hermes"
+    case .kimi: "kimi"
+    case .kiro: "kiro-cli"
+    case .omp: "omp"
+    case .opencode: "opencode"
+    case .pi: "pi"
+    }
+  }
+
   /// All agents ordered by their user-facing `displayName`, for settings lists.
   /// Computed once: the inputs are static, so re-sorting per access is waste.
   public static let allCasesByDisplayName: [SkillAgent] =

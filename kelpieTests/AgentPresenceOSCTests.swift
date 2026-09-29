@@ -144,6 +144,57 @@ struct AgentPresenceOSCTests {
     #expect(event.version == 1)
   }
 
+  // MARK: - model / effort fields (Claude session metadata).
+
+  @Test func parsesModelAndEffortFields() {
+    let signal = AgentPresenceOSC.parse(
+      id: "claude", metadata: "event=idle;model=claude-fable-5-1;effort=high")
+    #expect(signal?.eventRawValue == "idle")
+    #expect(signal?.model == "claude-fable-5-1")
+    #expect(signal?.effort == "high")
+  }
+
+  @Test func signalWithoutSessionFieldsHasNilModelAndEffort() {
+    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=busy;pid=7")
+    #expect(signal != nil)
+    #expect(signal?.model == nil)
+    #expect(signal?.effort == nil)
+  }
+
+  @Test(arguments: [
+    "bad model",  // whitespace
+    "bad/model",  // outside the wire alphabet
+    "",  // `model=;` splits to an empty value
+    String(repeating: "a", count: 65),  // one byte over the cap
+  ])
+  func rejectsMalformedModelWithoutDroppingTheSignal(model: String) {
+    let signal = AgentPresenceOSC.parse(
+      id: "claude", metadata: "event=idle;model=\(model);effort=high")
+    #expect(signal?.eventRawValue == "idle")
+    #expect(signal?.model == nil)
+    #expect(signal?.effort == "high")
+  }
+
+  @Test func acceptsModelAtTheByteCap() {
+    let model = String(repeating: "m", count: AgentPresenceOSC.sessionTokenByteCap)
+    let signal = AgentPresenceOSC.parse(id: "claude", metadata: "event=idle;model=\(model)")
+    #expect(signal?.model == model)
+  }
+
+  @Test func presenceEventCarriesSessionFieldsAsData() throws {
+    let result = AgentSignal.presenceEvent(
+      id: "claude", metadata: "event=session_start;model=claude-fable-5-1;effort=high",
+      surfaceID: UUID(), surfaceExists: true)
+    let event = try result.get()
+    #expect(event.presenceData == PresenceEventData(model: "claude-fable-5-1", effort: "high"))
+  }
+
+  @Test func presenceEventWithoutSessionFieldsCarriesNoData() throws {
+    let result = AgentSignal.presenceEvent(
+      id: "claude", metadata: "event=busy", surfaceID: UUID(), surfaceExists: true)
+    #expect(try result.get().data == nil)
+  }
+
   // MARK: - parseNotify.
 
   /// base64 of the JSON-escaped content of `text`, matching the wire the emitter

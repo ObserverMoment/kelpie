@@ -35,6 +35,11 @@ public nonisolated enum AgentPresenceOSC {
 
   static let eventField = "event"
   static let pidField = "pid"
+  /// Claude session metadata (`model=` / `effort=`), read from the transcript
+  /// in shell by the SessionStart and Stop hooks. Public so the app-side
+  /// event payload uses the same keys.
+  public static let modelField = "model"
+  public static let effortField = "effort"
   static let kindField = "kind"
   static let titleField = "title"
   static let bodyField = "body"
@@ -60,6 +65,11 @@ public nonisolated enum AgentPresenceOSC {
     /// so a local hook carries it and a remote one omits it; a forged positive
     /// pid at worst pins a live-looking badge until surface close.
     public let pid: pid_t?
+    /// Claude's session model / effort as the hook read them from the
+    /// transcript. nil when the emitter had none or the value falls outside the
+    /// `[A-Za-z0-9._-]{1,64}` wire alphabet; a bad value never fails the signal.
+    public let model: String?
+    public let effort: String?
   }
 
   /// Parse the OSC 3008 context id + raw key=value metadata (as surfaced by
@@ -76,7 +86,29 @@ public nonisolated enum AgentPresenceOSC {
       agent: id,
       eventRawValue: String(rawEvent),
       pid: parsePid(fields[Substring(pidField)]),
+      model: parseSessionToken(fields[Substring(modelField)]),
+      effort: parseSessionToken(fields[Substring(effortField)]),
     )
+  }
+
+  /// Parse an optional `model=` / `effort=` token: 1...`sessionTokenByteCap`
+  /// bytes of `[A-Za-z0-9._-]`. Anything else reads as absent so the presence
+  /// event still lands when a suffix is mangled.
+  private static func parseSessionToken(_ raw: Substring?) -> String? {
+    guard let raw, (1...sessionTokenByteCap).contains(raw.utf8.count),
+      raw.utf8.allSatisfy(isSessionTokenByte)
+    else { return nil }
+    return String(raw)
+  }
+
+  private static func isSessionTokenByte(_ byte: UInt8) -> Bool {
+    switch byte {
+    case UInt8(ascii: "A")...UInt8(ascii: "Z"), UInt8(ascii: "a")...UInt8(ascii: "z"),
+      UInt8(ascii: "0")...UInt8(ascii: "9"), UInt8(ascii: "."), UInt8(ascii: "_"), UInt8(ascii: "-"):
+      return true
+    default:
+      return false
+    }
   }
 
   /// Parse the optional `pid=` field. Rejects non-numeric and non-positive
@@ -218,12 +250,29 @@ public nonisolated enum AgentPresenceOSC {
   /// forged positive pid at worst pins a live-looking badge until surface close. The
   /// suffix is built in shell and filled into a trailing `%s`.
   static func emitShell(event: HookEvent, agent: SkillAgent) -> String {
-    // Trailing %s for the shell-built, conditionally-empty pid suffix.
-    let meta = metadata(event: event, pidSuffix: "%s")
+    presenceEmitShell(event: event, agent: agent, suffixArguments: [])
+  }
+
+  /// `emitShell` plus one more shell-built metadata suffix, spliced after the pid
+  /// suffix from the expansion of `metadataSuffixVariable` (e.g. `"$__me"`, the
+  /// transcript probe's `;model=…;effort=…`). It is a `printf` argument, never
+  /// part of the format, so its bytes are inert to `printf`. A separate overload
+  /// so every template built on `emitShell(event:agent:)` stays byte-identical.
+  static func emitShell(event: HookEvent, agent: SkillAgent, metadataSuffixVariable: String) -> String {
+    presenceEmitShell(event: event, agent: agent, suffixArguments: [metadataSuffixVariable])
+  }
+
+  private static func presenceEmitShell(
+    event: HookEvent, agent: SkillAgent, suffixArguments: [String]
+  ) -> String {
+    // One trailing %s per shell-built, conditionally-empty suffix: the pid first.
+    let arguments = ["$__sp"] + suffixArguments
+    let meta = metadata(event: event, pidSuffix: String(repeating: "%s", count: arguments.count))
     let payload = #"\033]3008;\#(action(for: event))=\#(agent.rawValue);\#(meta)\033\\"#
+    let quotedArguments = arguments.map { "\"\($0)\"" }.joined(separator: " ")
     return #"__sp=""; [ -n "${KELPIE_SOCKET_PATH:-}" ] && [ -n "$__ppid" ] "#
       + #"&& __sp=";\#(pidField)=$__ppid"; "#
-      + #"printf '\#(payload)' "$__sp" > "$__tty""#
+      + #"printf '\#(payload)' \#(quotedArguments) > "$__tty""#
   }
 
   /// The `key=value` metadata a notify signal carries; `title` / `body` are base64.
@@ -293,37 +342,82 @@ public nonisolated enum AgentPresenceOSC {
       + #"[ -n "$__t$__b" ] && printf '\#(payload)' "$__t" "$__b" > "$__tty""#
   }
 
-  // MARK: - Stop-hook API-error probe.
+  // MARK: - Transcript probe (Stop-hook API error, session model / effort).
 
-  /// Bytes of the transcript tail the Stop-hook probe reads. Bounded so the hook
+  /// Bytes of the transcript tail the probe reads. Bounded so the hook
   /// stays cheap. Sized well above the largest realistic entry, since a single
   /// tool-result line can run to tens of kilobytes.
   static let transcriptTailBytes = 262_144
 
-  /// Scans the transcript JSONL (compact, one object per line, oldest-first) and
-  /// prints `1` when the last message entry for `sid` is an API error: a later
-  /// `type:"user"` or non-error `type:"assistant"` line means the turn moved on.
-  /// An empty `sid` never matches, so a hook payload without `session_id` degrades
-  /// to idle rather than to another session's stale error. Substring matching
-  /// assumes compact JSON; anything else fails to match and yields idle, never a
-  /// spurious error. No single quote, so it survives single-quoting in shell.
-  static let apiErrorScanAwk =
-    #"{if(index($0,"\"isApiErrorMessage\":true")>0){if(sid!=""&&index($0,"\"sessionId\":\"" sid "\"")>0)c=1;next}"#
+  /// Byte cap on a `model` / `effort` token, enforced by the probe awk on the way
+  /// out and by `parse` on the way in.
+  static let sessionTokenByteCap = 64
+
+  /// One pass over the transcript JSONL tail (compact, one object per line,
+  /// oldest-first) that prints a single line `<apierr> <model> <effort>`:
+  /// - `apierr` is `1` when the last message entry for `sid` is an API error (a
+  ///   later `type:"user"` or non-error `type:"assistant"` line means the turn
+  ///   moved on), else `0`. An empty `sid` never matches, so a hook payload
+  ///   without `session_id` degrades to idle rather than to another session's
+  ///   stale error.
+  /// - `model` / `effort` are the `"model":"…"` / `"effort":"…"` values on the
+  ///   last `type:"assistant"` line carrying a valid one (Claude writes the model
+  ///   on every assistant entry, `<synthetic>` on its API-error entries; effort
+  ///   only where it applied), or `-` when none is valid. Validity is the
+  ///   `[A-Za-z0-9._-]{1,64}` wire alphabet, checked before a value can replace
+  ///   an earlier good one, so a `;` or `"` in a transcript can never splice a
+  ///   field into the OSC frame and a synthetic entry never hides the real model.
+  /// Substring matching assumes compact JSON; anything else fails to match and
+  /// yields idle / `-`, never a spurious error. Portable awk only and no single
+  /// quote, so it survives single-quoting in shell. Always prints three fields
+  /// (also on empty input) so the shell's `set --` split is total.
+  static let transcriptProbeAwk =
+    #"function fv(s,k,  p,i,j){p="\"" k "\":\"";i=index(s,p);if(i==0)return "";i+=length(p);"#
+    + #"j=index(substr(s,i),"\"");if(j==0)return "";return substr(s,i,j-1)}"#
+    + #"function tok(v){if(v==""||length(v)>\#(sessionTokenByteCap)||v!~/^[A-Za-z0-9._-]+$/)return "-";return v}"#
+    + #"{if(index($0,"\"type\":\"assistant\"")>0){v=tok(fv($0,"\#(modelField)"));if(v!="-")m=v;"#
+    + #"v=tok(fv($0,"\#(effortField)"));if(v!="-")e=v}"#
+    + #"if(index($0,"\"isApiErrorMessage\":true")>0){if(sid!=""&&index($0,"\"sessionId\":\"" sid "\"")>0)c=1;next}"#
     + #"if(index($0,"\"type\":\"user\"")>0){c=0;next}"#
     + #"if(index($0,"\"type\":\"assistant\"")>0){c=0;next}}"#
-    + #"END{printf "%s",(c?"1":"")}"#
+    + #"END{printf "%s %s %s",(c?"1":"0"),tok(m),tok(e)}"#
 
-  /// Sets `$__apierr=1` when the current turn ended in an API error. Leaves `$__in`
-  /// set so a following `emitNotifyShell(readsStdin: false)` reuses the one stdin
-  /// read. `awk` and `tail` only, so it works on a bare SSH host.
-  static func stopApiErrorProbeShell() -> String {
-    "\(readStdinSnippet); "
-      + #"__tp=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="transcript_path" "#
-      + #"-v budget=4096 '\#(notifyExtractAwk)'); "#
+  /// Extracts `transcript_path` into `$__tp` from the hook JSON already captured
+  /// in `$__in`.
+  private static let transcriptPathSnippet =
+    #"__tp=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="transcript_path" "#
+    + #"-v budget=4096 '\#(notifyExtractAwk)')"#
+
+  /// Runs `transcriptProbeAwk` over the tail of `$__tp` (with `$__sid` as the
+  /// error session filter) and splits its one output line into `$__apierr` (`1`
+  /// or empty) and `$__me`, the `;model=…;effort=…` presence-metadata suffix with
+  /// each part omitted when unknown. A missing transcript reads as `0 - -`.
+  /// `set -f` scopes the split so a `*` in the output can never glob. `awk` and
+  /// `tail` only, so it works on a bare SSH host.
+  private static let transcriptProbeSnippet =
+    #"__probe=""; [ -n "$__tp" ] && [ -f "$__tp" ] && "#
+    + #"__probe=$(tail -c \#(transcriptTailBytes) "$__tp" 2>/dev/null "#
+    + #"| LC_ALL=C awk -v sid="$__sid" '\#(transcriptProbeAwk)'); "#
+    + #"set -f; set -- $__probe; set +f; [ $# -eq 3 ] || set -- 0 - -; "#
+    + #"__apierr=""; [ "$1" = 1 ] && __apierr=1; "#
+    + #"__me=""; [ "$2" != - ] && __me="$__me;\#(modelField)=$2"; "#
+    + #"[ "$3" != - ] && __me="$__me;\#(effortField)=$3""#
+
+  /// Stop hook: reads stdin once (leaving `$__in` set so a following
+  /// `emitNotifyShell(readsStdin: false)` reuses it), then probes the transcript
+  /// for the current turn's API error (`$__apierr`) and the session's model /
+  /// effort suffix (`$__me`).
+  static func stopTranscriptProbeShell() -> String {
+    "\(readStdinSnippet); \(transcriptPathSnippet); "
       + #"__sid=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="session_id" "#
       + #"-v budget=256 '\#(notifyExtractAwk)'); "#
-      + #"__apierr=""; [ -n "$__tp" ] && [ -f "$__tp" ] && "#
-      + #"__apierr=$(tail -c \#(transcriptTailBytes) "$__tp" 2>/dev/null "#
-      + #"| LC_ALL=C awk -v sid="$__sid" '\#(apiErrorScanAwk)')"#
+      + transcriptProbeSnippet
+  }
+
+  /// SessionStart hook: the same probe, so a resumed session reports its model
+  /// before its first turn. `$__sid` is left empty so the error flag never sets;
+  /// the caller ignores `$__apierr` and emits `$__me`.
+  static func sessionStartProbeShell() -> String {
+    "\(readStdinSnippet); \(transcriptPathSnippet); __sid=\"\"; " + transcriptProbeSnippet
   }
 }

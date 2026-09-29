@@ -1,8 +1,8 @@
 import ComposableArchitecture
 import Darwin
 import Foundation
-import Sharing
 import KelpieSettingsShared
+import Sharing
 
 @Reducer
 struct AgentPresenceFeature {
@@ -62,6 +62,11 @@ struct AgentPresenceFeature {
     /// arrives over OSC now, so there is no "socket-owned" record to defend
     /// against.
     var pids: Set<pid_t>
+    /// Claude's session model / effort as reported by its hooks; nil for other
+    /// agents and before the first signal that carried them. Dropped with the
+    /// record; not persisted across launches.
+    var model: String?
+    var effort: String?
   }
 
   nonisolated struct RestoredRecord: Sendable {
@@ -107,6 +112,7 @@ struct AgentPresenceFeature {
     /// Per-surface agent presence. A surface can host multiple agents (rare,
     /// but possible if e.g. Claude spawns Codex). Order not guaranteed; sort before display.
     var bySurface: [UUID: Set<SkillAgent>] = [:]
+
   }
 
   /// Period between liveness sweeps. Cost scales with active sessions, not
@@ -194,6 +200,32 @@ struct AgentPresenceFeature {
   private static func apply(event: AgentHookEvent, into state: inout State) -> Set<UUID> {
     guard let agent = SkillAgent(rawValue: event.agent) else { return [] }
     let key = PresenceKey(agent: agent, surfaceID: event.surfaceID)
+    let changed = applyLifecycle(event: event, key: key, into: &state)
+    applySessionFields(event: event, key: key, into: &state)
+    return changed
+  }
+
+  /// Copies the `model` / `effort` a signal carries onto the record the lifecycle
+  /// step left for `key`. Only the lifecycle creates or removes records, so a
+  /// payload on an event that seeded nothing is dropped; a field the signal omits
+  /// keeps its last value. Not part of the changed-surface set: rows and the
+  /// persisted layout carry neither field, and Fleet View recomputes on every
+  /// presence action.
+  private static func applySessionFields(
+    event: AgentHookEvent, key: PresenceKey, into state: inout State
+  ) {
+    guard let data = event.presenceData, data.model != nil || data.effort != nil,
+      let current = state.records[key]
+    else { return }
+    var record = current
+    record.model = data.model ?? current.model
+    record.effort = data.effort ?? current.effort
+    state.records[key] = record
+  }
+
+  private static func applyLifecycle(
+    event: AgentHookEvent, key: PresenceKey, into state: inout State
+  ) -> Set<UUID> {
     switch event.eventName {
     case .sessionStart:
       return applySessionStart(event: event, key: key, into: &state)

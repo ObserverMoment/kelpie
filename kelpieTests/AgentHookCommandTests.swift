@@ -165,6 +165,7 @@ struct AgentHookCommandTests {
       AgentHookSettingsCommand.compositeCommand(
         events: [.idle], forwardStdinAsNotification: true, agent: .codex),
       AgentHookSettingsCommand.claudeStopCommand(agent: .claude),
+      AgentHookSettingsCommand.claudeSessionStartCommand(agent: .claude),
     ]
     for command in commands {
       #expect(command.ranges(of: "ps -o").count == 1)
@@ -851,6 +852,175 @@ struct AgentHookCommandTests {
     #expect(notify.body == "all done")
   }
 
+  // MARK: - Session model / effort probe (real shell).
+
+  /// One compact assistant entry in Claude's transcript shape: `effort` at the top
+  /// level, `model` inside `message`.
+  private static func assistantLine(model: String, effort: String? = nil) -> String {
+    let effortField = effort.map { #","effort":"\#($0)""# } ?? ""
+    return #"{"type":"assistant","sessionId":"S"\#(effortField),"#
+      + #""message":{"role":"assistant","model":"\#(model)","content":"x"}}"#
+  }
+
+  /// Runs the Claude SessionStart hook with a stdin payload pointing at
+  /// `transcriptPath` (nil omits the field, as a fresh session does).
+  private func runSessionStartHook(transcriptPath: String?) async throws -> String {
+    let base: [String: String] = ["KELPIE_SURFACE_ID": UUID().uuidString]
+    let command = AgentHookSettingsCommand.claudeSessionStartCommand(agent: .claude)
+    let pathField = transcriptPath.map { #","transcript_path":"\#($0)""# } ?? ""
+    let json = #"{"hook_event_name":"SessionStart","session_id":"S","source":"resume"\#(pathField)}"#
+    return try await runHookCommandCapturingTTY(command, env: base, stdin: json)
+  }
+
+  @Test func stopCarriesModelAndEffortFromTheLastAssistantLine() async throws {
+    let transcript = try writeTranscript([
+      Self.transcriptLine(type: "user"),
+      Self.assistantLine(model: "claude-fable-5-1", effort: "high"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(tty.contains("model=claude-fable-5-1"))
+    #expect(tty.contains("effort=high"))
+    let signal = try #require(Self.parsePresence(fromTTY: tty))
+    #expect(signal.model == "claude-fable-5-1")
+    #expect(signal.effort == "high")
+  }
+
+  @Test func stopReportsTheLatestModelAfterASwitch() async throws {
+    let transcript = try writeTranscript([
+      Self.assistantLine(model: "claude-old-1", effort: "low"),
+      Self.transcriptLine(type: "user"),
+      Self.assistantLine(model: "claude-fable-5-1", effort: "high"),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let signal = try #require(Self.parsePresence(fromTTY: try await runStopHook(transcriptPath: transcript.path)))
+    #expect(signal.model == "claude-fable-5-1")
+    #expect(signal.effort == "high")
+  }
+
+  @Test func stopOmitsModelWhenTranscriptMissing() async throws {
+    let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("kelpie-missing-\(UUID().uuidString).jsonl")
+    let tty = try await runStopHook(transcriptPath: missing.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("model="))
+    #expect(!tty.contains("effort="))
+  }
+
+  @Test func stopOmitsSessionFieldsTheTranscriptDoesNotCarry() async throws {
+    let transcript = try writeTranscript([Self.transcriptLine(type: "assistant")])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("model="))
+    #expect(!tty.contains("effort="))
+  }
+
+  @Test func stopDropsAModelOutsideTheWireAlphabetButKeepsEffort() async throws {
+    // A `;` would splice a field into the OSC frame, so the probe drops it shell-side.
+    let transcript = try writeTranscript([Self.assistantLine(model: "bad;model", effort: "high")])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("model="))
+    let signal = try #require(Self.parsePresence(fromTTY: tty))
+    #expect(signal.effort == "high")
+  }
+
+  /// Claude's API-error entry: an assistant line flagged `isApiErrorMessage` whose
+  /// model is the literal `<synthetic>`, which fails the wire alphabet.
+  private static func apiErrorAssistantLine() -> String {
+    #"{"type":"assistant","sessionId":"S","isApiErrorMessage":true,"error":"server_error","#
+      + #""message":{"role":"assistant","model":"<synthetic>","content":"x"}}"#
+  }
+
+  @Test func stopErrorBranchAlsoCarriesTheSessionModel() async throws {
+    // The synthetic model on the error line must not displace the real one read earlier.
+    let transcript = try writeTranscript([
+      Self.assistantLine(model: "claude-fable-5-1", effort: "high"),
+      Self.apiErrorAssistantLine(),
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=error"))
+    let signal = try #require(Self.parsePresence(fromTTY: tty))
+    #expect(signal.eventRawValue == "error")
+    #expect(signal.model == "claude-fable-5-1")
+  }
+
+  @Test func stopDropsOverLongOrNonAlphabetTokensBeforeTheWire() async throws {
+    let transcript = try writeTranscript([
+      Self.assistantLine(model: String(repeating: "m", count: 65), effort: "hi gh")
+    ])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("model="))
+    #expect(!tty.contains("effort="))
+  }
+
+  @Test func stopTreatsAnEmptyTranscriptAsUnknown() async throws {
+    let transcript = try writeTranscript([])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("model="))
+    #expect(!tty.contains(";;"))
+  }
+
+  @Test func stopOnlyReadsTheTranscriptTail() async throws {
+    // One real assistant line pushed out of the 256 KiB tail by padding entries.
+    let paddingLine = Self.transcriptLine(type: "user")
+    let paddingCount = AgentPresenceOSC.transcriptTailBytes / (paddingLine.utf8.count + 1) + 50
+    let padding = Array(repeating: paddingLine, count: paddingCount)
+    let transcript = try writeTranscript([Self.assistantLine(model: "claude-fable-5-1", effort: "high")] + padding)
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runStopHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=idle"))
+    #expect(!tty.contains("model="))
+  }
+
+  @Test func sessionStartCarriesModelFromTheResumedTranscript() async throws {
+    let transcript = try writeTranscript([Self.assistantLine(model: "claude-fable-5-1", effort: "high")])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runSessionStartHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=session_start"))
+    #expect(tty.contains("model=claude-fable-5-1"))
+    let signal = try #require(Self.parsePresence(fromTTY: tty))
+    #expect(signal.eventRawValue == "session_start")
+    #expect(signal.model == "claude-fable-5-1")
+    #expect(signal.effort == "high")
+  }
+
+  @Test func sessionStartWithoutTranscriptPathEmitsThePlainEvent() async throws {
+    let tty = try await runSessionStartHook(transcriptPath: nil)
+    #expect(tty.contains("event=session_start"))
+    #expect(!tty.contains("model="))
+    #expect(!tty.contains("effort="))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func sessionStartNeverEmitsErrorEvenForAnErroredTranscript() async throws {
+    let transcript = try writeTranscript([Self.transcriptLine(type: "assistant", isApiError: true)])
+    defer { try? FileManager.default.removeItem(at: transcript) }
+    let tty = try await runSessionStartHook(transcriptPath: transcript.path)
+    #expect(tty.contains("event=session_start"))
+    #expect(!tty.contains("event=error"))
+  }
+
+  @Test func claudeSessionStartHookProbesTheTranscript() throws {
+    let groups = try ClaudeHookSettings.hooksByEvent()
+    let sessionStart = try #require(groups["SessionStart"])
+    let command = try #require(Self.commandStrings(in: sessionStart).first)
+    #expect(command == AgentHookSettingsCommand.claudeSessionStartCommand(agent: .claude))
+    #expect(command.contains("transcript_path"))
+    #expect(command.contains("]3008;start=claude;event=session_start"))
+    #expect(!command.contains("kind=notify"))
+    #expect(!command.contains("jq"))
+    #expect(!command.contains("python"))
+  }
+
   // MARK: - OSC presence round-trip.
 
   @Test func presenceOSCRoundTripsThroughParser() async throws {
@@ -915,6 +1085,7 @@ struct AgentHookCommandTests {
       ]
     }
     commands.append(AgentHookSettingsCommand.claudeStopCommand(agent: .claude))
+    commands.append(AgentHookSettingsCommand.claudeSessionStartCommand(agent: .claude))
     #expect(commands.allSatisfy { !ManagedHookCommandVariables.names(in: $0).isEmpty })
     #expect(commands.allSatisfy { ManagedHookCommandVariables.unexpected(in: $0).isEmpty })
   }

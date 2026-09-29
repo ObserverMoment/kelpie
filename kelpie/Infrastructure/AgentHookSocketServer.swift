@@ -623,3 +623,19 @@ private nonisolated enum SocketCommandRequest {
     }
   }
 }
+
+// MARK: - Presence event payload.
+
+/// Per-session fields a Claude presence signal carries in `data`
+/// (`{"model": …, "effort": …}`), lifted off the OSC `model=` / `effort=` fields.
+/// Both optional: a signal carries whichever the hook could read.
+nonisolated struct PresenceEventData: Codable, Equatable, Sendable {
+  let model: String?
+  let effort: String?
+}
+
+extension AgentHookEvent {
+  /// The session fields this event carries, or nil when `data` is absent (every
+  /// non-Claude emitter) or is some other payload shape.
+  var presenceData: PresenceEventData? { decodeData() }
+}

@@ -21,6 +21,7 @@ struct ContentView: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
   @State private var leftSidebarVisibility: NavigationSplitViewVisibility = .all
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager) {
     self.store = store
@@ -43,6 +44,37 @@ struct ContentView: View {
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!repositoriesStore.isInitialLoadComplete)
+    // Fleet View covers the split view instead of replacing it so the hosted
+    // terminals are never torn down; it slides in from the sidebar's edge.
+    .overlay {
+      if store.fleetView.isPresented {
+        FleetView(
+          store: store.scope(state: \.fleetView, action: \.fleetView),
+          runtime: ContentRuntime.liveValue
+        )
+        .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
+      }
+    }
+    .animation(
+      reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.35, dampingFraction: 0.85),
+      value: store.fleetView.isPresented
+    )
+    .focusedSceneAction(\.toggleFleetViewAction, enabled: true) {
+      store.send(.fleetView(.toggle))
+    }
+    // Lives here, not inside the overlay: the overlay leaves the tree the moment
+    // Fleet View closes, so only a permanently mounted host can deactivate the
+    // monitor for the exit transition.
+    .background {
+      FleetViewKeyMonitor(isActive: store.fleetView.isPresented) { decision in
+        switch decision {
+        case .move(let direction): store.send(.fleetView(.moveFocus(direction)))
+        case .activate: store.send(.fleetView(.activateFocusedCard))
+        case .dismiss: store.send(.fleetView(.dismiss))
+        case .swallow, .menuShortcut: break
+        }
+      }
+    }
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
     }

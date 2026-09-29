@@ -71,27 +71,52 @@ nonisolated enum AgentHookSettingsCommand {
     var steps: [String] = [AgentPresenceOSC.ttyResolveSnippet]
     steps += events.map { AgentPresenceOSC.emitShell(event: $0, agent: agent) }
     if forwardStdinAsNotification { steps.append(AgentPresenceOSC.emitNotifyShell(agent: agent)) }
-    return "\(oscGuardExpr) && { \(steps.joined(separator: "; ")); } >/dev/null 2>&1 || true \(ownershipMarker)"
+    return guardedCommand(steps: steps)
   }
+
+  /// The one hook command shape: guard, then the steps in a brace group with all
+  /// output suppressed, then the ownership marker.
+  private static func guardedCommand(steps: [String]) -> String {
+    "\(oscGuardExpr) && { \(steps.joined(separator: "; ")); } >/dev/null 2>&1 || true \(ownershipMarker)"
+  }
+
+  /// Shell variable the Claude transcript probe fills with the `;model=…;effort=…`
+  /// presence-metadata suffix (empty when unknown).
+  private static let sessionMetadataVariable = "$__me"
 
   /// Claude `Stop`: probes the transcript for a current-turn API error and emits
   /// `.error` plus a fixed restart notify when it finds one, else `.idle` plus the
   /// usual stdin-sourced notify. Claude reports an API error through a plain `Stop`,
   /// so without the probe a dead turn is indistinguishable from a completed one.
+  /// Both presence emits carry the session model / effort the probe read.
   static func claudeStopCommand(agent: SkillAgent) -> String {
     let errorBranch =
-      "\(AgentPresenceOSC.emitShell(event: .error, agent: agent)); "
+      "\(AgentPresenceOSC.emitShell(event: .error, agent: agent, metadataSuffixVariable: sessionMetadataVariable)); "
       + AgentPresenceOSC.emitFixedNotifyShell(
         agent: agent, title: Self.errorNotifyTitle, body: Self.errorNotifyBody)
     let idleBranch =
-      "\(AgentPresenceOSC.emitShell(event: .idle, agent: agent)); "
+      "\(AgentPresenceOSC.emitShell(event: .idle, agent: agent, metadataSuffixVariable: sessionMetadataVariable)); "
       + AgentPresenceOSC.emitNotifyShell(agent: agent, readsStdin: false)
     let steps: [String] = [
       AgentPresenceOSC.ttyResolveSnippet,
-      AgentPresenceOSC.stopApiErrorProbeShell(),
+      AgentPresenceOSC.stopTranscriptProbeShell(),
       #"if [ -n "$__apierr" ]; then \#(errorBranch); else \#(idleBranch); fi"#,
     ]
-    return "\(oscGuardExpr) && { \(steps.joined(separator: "; ")); } >/dev/null 2>&1 || true \(ownershipMarker)"
+    return guardedCommand(steps: steps)
+  }
+
+  /// Claude `SessionStart`: probes the transcript named in the hook payload for
+  /// the session's model / effort and emits `.sessionStart` carrying them, so a
+  /// resumed session shows its model before its first turn. A fresh session has
+  /// no transcript yet and emits the plain event.
+  static func claudeSessionStartCommand(agent: SkillAgent) -> String {
+    let steps: [String] = [
+      AgentPresenceOSC.ttyResolveSnippet,
+      AgentPresenceOSC.sessionStartProbeShell(),
+      AgentPresenceOSC.emitShell(
+        event: .sessionStart, agent: agent, metadataSuffixVariable: sessionMetadataVariable),
+    ]
+    return guardedCommand(steps: steps)
   }
 
   /// Fixed headline / body for the error notification the Stop hook raises.

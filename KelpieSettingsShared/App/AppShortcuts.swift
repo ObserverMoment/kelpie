@@ -7,7 +7,7 @@ import SwiftUI
 // Compile-time checkable shortcut identifier.
 public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRepresentable {
   case commandPalette, worktreeSwitcher, openSettings, checkForUpdates, showMainWindow
-  case toggleLeftSidebar, revealInSidebar
+  case toggleLeftSidebar, revealInSidebar, toggleFleetView
   case expandAllSidebarGroups, collapseAllSidebarGroups
   case newWorktree, refreshWorktrees, archivedWorktrees, archiveWorktree
   case deleteWorktree, confirmWorktreeAction
@@ -52,6 +52,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .showMainWindow: "showMainWindow"
     case .toggleLeftSidebar: "toggleLeftSidebar"
     case .revealInSidebar: "revealInSidebar"
+    case .toggleFleetView: "toggleFleetView"
     case .expandAllSidebarGroups: "expandAllSidebarGroups"
     case .collapseAllSidebarGroups: "collapseAllSidebarGroups"
     case .newWorktree: "newWorktree"
@@ -110,6 +111,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "showMainWindow": .showMainWindow,
     "toggleLeftSidebar": .toggleLeftSidebar,
     "revealInSidebar": .revealInSidebar,
+    "toggleFleetView": .toggleFleetView,
     "expandAllSidebarGroups": .expandAllSidebarGroups,
     "collapseAllSidebarGroups": .collapseAllSidebarGroups,
     "newWorktree": .newWorktree,
@@ -185,6 +187,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .showMainWindow: "Show Main Window"
     case .toggleLeftSidebar: "Toggle Left Sidebar"
     case .revealInSidebar: "Reveal in Sidebar"
+    case .toggleFleetView: "Toggle Fleet View"
     case .expandAllSidebarGroups: "Expand All Sidebar Groups"
     case .collapseAllSidebarGroups: "Collapse All Sidebar Groups"
     case .newWorktree: "New Worktree"
@@ -459,6 +462,7 @@ public enum AppShortcuts {
 
   public static let toggleLeftSidebar = AppShortcut(id: .toggleLeftSidebar, key: "[", modifiers: .command)
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
+  public static let toggleFleetView = AppShortcut(id: .toggleFleetView, key: "l", modifiers: [.command, .shift])
   // `]` expands (opens rightward), `[` collapses, mirroring the outline-view
   // Right/Left arrow convention, and pairs with ⌘[ for the sidebar toggle.
   public static let expandAllSidebarGroups = AppShortcut(
@@ -643,7 +647,7 @@ public enum AppShortcuts {
     ),
     AppShortcutGroup(
       category: .sidebar,
-      shortcuts: [toggleLeftSidebar, revealInSidebar, expandAllSidebarGroups, collapseAllSidebarGroups]
+      shortcuts: [toggleLeftSidebar, toggleFleetView, revealInSidebar, expandAllSidebarGroups, collapseAllSidebarGroups]
     ),
     AppShortcutGroup(
       category: .worktrees,

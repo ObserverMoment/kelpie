@@ -2,8 +2,8 @@ import ComposableArchitecture
 import Darwin
 import Dependencies
 import Foundation
-import Sharing
 import KelpieSettingsShared
+import Sharing
 import Testing
 
 @testable import kelpie
@@ -56,6 +56,93 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true) == Set([.claude]))
     let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
     #expect(harness.state.records[key]?.pids.isEmpty == true)
+  }
+
+  // MARK: - Session model / effort.
+
+  @Test func sessionStartStoresModelAndEffortOnTheRecord() {
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(
+      .hookEventReceived(
+        makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: getpid(),
+          data: ["model": "claude-fable-5-1", "effort": "high"])))
+
+    let record = harness.state.presenceRecord(agent: .claude, surfaceID: surfaceID)
+    #expect(record?.model == "claude-fable-5-1")
+    #expect(record?.effort == "high")
+    #expect(record?.pids == [getpid()])
+  }
+
+  @Test func laterIdleWithADifferentModelUpdatesTheRecord() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(
+      .hookEventReceived(
+        makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid,
+          data: ["model": "claude-old-1", "effort": "low"])))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID, pid: pid)))
+    harness.send(
+      .hookEventReceived(
+        makeEvent(.idle, agent: .claude, surfaceID: surfaceID, pid: pid, data: ["model": "claude-fable-5-1"])))
+
+    let record = harness.state.presenceRecord(agent: .claude, surfaceID: surfaceID)
+    #expect(record?.activity == .idle)
+    #expect(record?.model == "claude-fable-5-1")
+    // A field the signal omits keeps its last value.
+    #expect(record?.effort == "low")
+  }
+
+  @Test func sessionFieldsWithoutARecordDoNotSeedOne() {
+    // A pid-bearing idle with no presence is dropped by the lifecycle step; the
+    // session fields must not resurrect it.
+    var harness = Harness()
+    let surfaceID = UUID()
+
+    harness.send(
+      .hookEventReceived(
+        makeEvent(.idle, agent: .claude, surfaceID: surfaceID, pid: getpid(), data: ["model": "claude-fable-5-1"])))
+
+    #expect(harness.state.presenceRecord(agent: .claude, surfaceID: surfaceID) == nil)
+  }
+
+  @Test func eventWithoutSessionFieldsLeavesThemUntouched() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(
+      .hookEventReceived(
+        makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid,
+          data: ["model": "claude-fable-5-1", "effort": "high"])))
+    harness.send(.hookEventReceived(makeEvent(.busy, agent: .claude, surfaceID: surfaceID, pid: pid)))
+
+    let record = harness.state.presenceRecord(agent: .claude, surfaceID: surfaceID)
+    #expect(record?.activity == .busy)
+    #expect(record?.model == "claude-fable-5-1")
+    #expect(record?.effort == "high")
+  }
+
+  @Test func sessionEndDropsTheRecordWithItsSessionFields() {
+    var harness = Harness()
+    let surfaceID = UUID()
+    let pid = getpid()
+
+    harness.send(
+      .hookEventReceived(
+        makeEvent(
+          .sessionStart, agent: .claude, surfaceID: surfaceID, pid: pid,
+          data: ["model": "claude-fable-5-1", "effort": "high"])))
+    harness.send(.hookEventReceived(makeEvent(.sessionEnd, agent: .claude, surfaceID: surfaceID, pid: pid)))
+
+    #expect(harness.state.presenceRecord(agent: .claude, surfaceID: surfaceID) == nil)
+    #expect(harness.state.agents(forSurface: surfaceID, badgesEnabled: true).isEmpty)
   }
 
   // MARK: - Error + compaction.
@@ -1078,20 +1165,28 @@ struct AgentPresenceFeatureTests {
   }
 
   private func makeEvent(
-    _ name: AgentHookEvent.EventName, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil
+    _ name: AgentHookEvent.EventName, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil,
+    data: [String: String]? = nil
   ) -> AgentHookEvent {
-    makeEvent(rawEventName: name.rawValue, agent: agent, surfaceID: surfaceID, pid: pid)
+    makeEvent(rawEventName: name.rawValue, agent: agent, surfaceID: surfaceID, pid: pid, data: data)
   }
 
+  /// `data` becomes the event's JSON `data` object (string values only).
   private func makeEvent(
-    rawEventName: String, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil
+    rawEventName: String, agent: SkillAgent, surfaceID: UUID, pid: pid_t? = nil,
+    data: [String: String]? = nil
   ) -> AgentHookEvent {
     let pidLine = pid.map { ",\n        \"pid\": \($0)" } ?? ""
+    let dataLine =
+      data.map { fields in
+        let pairs = fields.sorted { $0.key < $1.key }.map { "\"\($0.key)\": \"\($0.value)\"" }
+        return ",\n        \"data\": {\(pairs.joined(separator: ", "))}"
+      } ?? ""
     let json = """
       {
         "event": "\(rawEventName)",
         "agent": "\(agent.rawValue)",
-        "surface_id": "\(surfaceID.uuidString)"\(pidLine)
+        "surface_id": "\(surfaceID.uuidString)"\(pidLine)\(dataLine)
       }
       """
     guard let event = try? JSONDecoder().decode(AgentHookEvent.self, from: Data(json.utf8)) else {
@@ -1125,5 +1220,11 @@ struct AgentPresenceFeatureTests {
       }
     }
     return candidate
+  }
+}
+
+extension AgentPresenceFeature.State {
+  fileprivate func presenceRecord(agent: SkillAgent, surfaceID: UUID) -> AgentPresenceFeature.PresenceRecord? {
+    records[AgentPresenceFeature.PresenceKey(agent: agent, surfaceID: surfaceID)]
   }
 }

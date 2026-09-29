@@ -54,7 +54,18 @@ nonisolated enum AgentSignal {
     }
     return .success(
       AgentHookEvent(
-        agent: signal.agent, event: signal.eventRawValue, surfaceID: surfaceID, pid: signal.pid))
+        agent: signal.agent, event: signal.eventRawValue, surfaceID: surfaceID, pid: signal.pid,
+        data: presenceData(signal)))
+  }
+
+  /// The `PresenceEventData` shape for the session fields the wire carried, or
+  /// nil when it carried neither so the event is byte-for-byte what it was.
+  private static func presenceData(_ signal: AgentPresenceOSC.Signal) -> JSONValue? {
+    let fields: [String: JSONValue] = [
+      AgentPresenceOSC.modelField: signal.model.map(JSONValue.string),
+      AgentPresenceOSC.effortField: signal.effort.map(JSONValue.string),
+    ].compactMapValues { $0 }
+    return fields.isEmpty ? nil : .object(fields)
   }
 
   /// Splits a raw OSC 3008 payload (`<action>=<id>[;<metadata>]`) into context id

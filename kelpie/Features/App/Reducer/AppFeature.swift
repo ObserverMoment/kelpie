@@ -1,9 +1,9 @@
 import AppKit
 import ComposableArchitecture
 import Foundation
-import OrderedCollections
 import KelpieSettingsFeature
 import KelpieSettingsShared
+import OrderedCollections
 import SwiftUI
 
 private nonisolated let appLogger = KelpieLogger("App")
@@ -92,6 +92,7 @@ struct AppFeature {
     var settings: SettingsFeature.State
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
+    var fleetView = FleetViewFeature.State()
     /// Terminal-orchestration state. Owns the per-tab feature collection so
     /// tab-bar views scope through `\.terminals` (narrow) instead of the full
     /// app store. Mirrors sidebar's `RepositoriesFeature` ownership pattern.
@@ -293,6 +294,7 @@ struct AppFeature {
     case settings(SettingsFeature.Action)
     case updates(UpdatesFeature.Action)
     case commandPalette(CommandPaletteFeature.Action)
+    case fleetView(FleetViewFeature.Action)
     case openActionSelectionChanged(OpenWorktreeAction)
     /// Re-sweep LaunchServices. Activation is not enough on its own: an editor can be
     /// installed from a Kelpie terminal (`brew install --cask …`), which never takes
@@ -1697,6 +1699,51 @@ struct AppFeature {
         // that already passed focusTerminal: true.
         return .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
 
+      case .fleetView(.delegate(.openSession(let worktreeID, let tabID, let surfaceID))):
+        guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
+        // Same shape as jump-to-unread: `focusSurface` carries the worktree, so it
+        // needn't wait for the selection to land.
+        return .merge(
+          .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
+          .run { _ in
+            await terminalClient.send(.focusSurface(worktree, tabID: tabID, surfaceID: surfaceID))
+          }
+        )
+
+      case .fleetView(.delegate(.launch(let worktreeID, let command))):
+        guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
+        let shouldRunSetupScript =
+          state.repositories.sidebarItems[id: worktreeID]?.lifecycle == .pending
+        return .merge(
+          .send(.repositories(.selectWorktree(worktreeID, focusTerminal: false))),
+          .run { _ in
+            await terminalClient.send(
+              .createTabWithInput(
+                worktree, input: command, runSetupScriptIfNew: shouldRunSetupScript, focusing: true))
+          }
+        )
+
+      case .fleetView(.delegate(.dismissed)):
+        // Mirror the palette: a cancel carries no destination, so refocus the
+        // selected worktree's terminal.
+        guard let worktreeID = state.repositories.selectedWorktreeID,
+          state.repositories.sidebarItems[id: worktreeID] != nil
+        else { return .none }
+        return .send(
+          .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
+        )
+
+      case .fleetView(.toggle):
+        // Seed the launcher with the selected worktree before the child opens
+        // (the child reducer runs after this arm).
+        if !state.fleetView.isPresented {
+          state.fleetView.launcherWorktreeID = state.repositories.selectedWorktreeID
+        }
+        return .none
+
+      case .fleetView:
+        return .none
+
       case .commandPalette(.delegate(.dismissedWithoutSelection)):
         // Always-focused-terminal invariant. Cancellation paths (Esc, outside
         // tap, programmatic close) don't carry a destination; refocus the
@@ -2114,6 +2161,9 @@ struct AppFeature {
     Scope(state: \.commandPalette, action: \.commandPalette) {
       CommandPaletteFeature()
     }
+    Scope(state: \.fleetView, action: \.fleetView) {
+      FleetViewFeature()
+    }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
     }
@@ -2125,6 +2175,31 @@ struct AppFeature {
       // actions that demonstrably can't change a snapshot input (#289).
       guard action.affectsWorktreeMenuSnapshot else { return .none }
       state.recomputeWorktreeMenuSnapshotIfChanged()
+      return .none
+    }
+    Reduce { state, action in
+      // Fleet View's card grid is derived state, refreshed in place only while
+      // the overlay is up and only for actions that can move an input
+      // (sidebar-structure precedent: no action per tick, and `applyStructure`
+      // writes only when the value changed).
+      guard state.fleetView.isPresented, action.affectsFleetViewStructure else { return .none }
+      let groupIDByRepositoryID = state.repositories.sidebar.groups.values.reduce(
+        into: [Repository.ID: RepositoryGroupID]()
+      ) { map, group in
+        for repositoryID in group.repositoryIDs { map[repositoryID] = group.id }
+      }
+      state.fleetView.applyStructure(
+        FleetViewStructure.compute(
+          .init(
+            sidebarStructure: state.repositories.sidebarStructure,
+            groupIDByRepositoryID: groupIDByRepositoryID,
+            sidebarItems: state.repositories.sidebarItems,
+            repositories: state.repositories.repositories,
+            presence: state.agentPresence,
+            layouts: state.terminals.layouts
+          )
+        )
+      )
       return .none
     }
   }

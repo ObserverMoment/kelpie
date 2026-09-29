@@ -22,6 +22,8 @@ nonisolated enum ClaudeHookSettingsError: Error {
 // (the socket debounces idle to bridge between-tool gaps). AskUserQuestion /
 // ExitPlanMode / Notification overwrite to `awaitingInput`; Stop and SessionEnd
 // reset to `idle`. The pid liveness sweep is the safety net for crashed turns.
+// SessionStart and Stop also carry the session model / effort read from the
+// transcript (`AgentPresenceOSC.transcriptProbeAwk`).
 // Only Claude has tool-level granularity; Codex and Kiro stay turn-level, so
 // their shimmer spans the whole turn.
 private nonisolated struct ClaudeHooksPayload: Encodable {
@@ -40,8 +42,7 @@ private nonisolated struct ClaudeHooksPayload: Encodable {
   // completion. `SessionStart(source: compact)` is what ends the compacting state.
   private static let compacting = AgentHookSettingsCommand.compositeCommand(
     events: [.compacting], forwardStdinAsNotification: false, agent: .claude)
-  private static let sessionStart = AgentHookSettingsCommand.compositeCommand(
-    events: [.sessionStart], forwardStdinAsNotification: false, agent: .claude)
+  private static let sessionStart = AgentHookSettingsCommand.claudeSessionStartCommand(agent: .claude)
   private static let sessionEndAndIdle = AgentHookSettingsCommand.compositeCommand(
     events: [.sessionEnd, .idle], forwardStdinAsNotification: false, agent: .claude)
 

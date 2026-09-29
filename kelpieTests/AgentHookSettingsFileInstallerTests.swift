@@ -435,6 +435,34 @@ struct AgentHookSettingsFileInstallerTests {
     #expect(state == .notInstalled)
   }
 
+  @Test func installStateIsOutdatedWhenClaudeSessionStartHasThePreviousShape() throws {
+    // Before the model / effort probe, Claude's SessionStart was a plain composite
+    // emit. A file still holding that shape must read `.outdated` so Settings >
+    // Developer offers the reinstall instead of reporting a converged install.
+    let url = makeTempURL()
+    defer { try? fileManager.removeItem(at: url.deletingLastPathComponent()) }
+    let installer = makeInstaller()
+    let current = try ClaudeHookSettings.hooksByEvent()
+    var previous = current
+    previous["SessionStart"] = [
+      .object([
+        "hooks": .array([
+          .object([
+            "type": "command",
+            "command": .string(
+              AgentHookSettingsCommand.compositeCommand(
+                events: [.sessionStart], forwardStdinAsNotification: false, agent: .claude)),
+            "timeout": .int(AgentHookSettingsCommand.timeoutSeconds),
+          ])
+        ])
+      ])
+    ]
+    try installer.install(settingsURL: url, hookGroupsByEvent: previous)
+
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: previous) == .installed)
+    #expect(try installer.installState(settingsURL: url, hookGroupsByEvent: current) == .outdated)
+  }
+
   @Test func installStateThrowsWhenTheFileExistsButCannotBeRead() throws {
     // The file is there but the OS refuses the read, which must not resolve to
     // `.notInstalled`.
