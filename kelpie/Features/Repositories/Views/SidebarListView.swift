@@ -524,7 +524,7 @@ private struct SidebarGroupMemberRows: View {
           store: store
         )
         .padding(.leading, SidebarNestLayout.groupMemberIndent)
-        .listRowBackground(SidebarGroupCardFill(edge: closesCard && !isExpanded ? .bottom : .middle))
+        .groupCardRowBackground(closesCard && !isExpanded ? .bottom : .middle)
         if isExpanded {
           let hoistSummary = structure.hoistSummaryByRepositoryID[repositoryID]
           SidebarItemsView(
@@ -543,7 +543,7 @@ private struct SidebarGroupMemberRows: View {
               store: store
             )
             .padding(.leading, SidebarNestLayout.groupMemberIndent)
-            .listRowBackground(SidebarGroupCardFill(edge: closesCard ? .bottom : .middle))
+            .groupCardRowBackground(closesCard ? .bottom : .middle)
           }
         }
       }
@@ -557,7 +557,7 @@ private struct SidebarGroupMemberRows: View {
           terminalManager: terminalManager
         )
         .padding(.leading, SidebarNestLayout.groupMemberIndent)
-        .listRowBackground(SidebarGroupCardFill(edge: closesCard ? .bottom : .middle))
+        .groupCardRowBackground(closesCard ? .bottom : .middle)
       }
     case .highlight, .placeholder, .failedRepository, .environmentBlockedRepository, .repositoryGroup:
       EmptyView()
@@ -644,7 +644,10 @@ private struct SidebarGroupHeaderRow: View {
     }
     // Top padding matches the card's top margin so the title sits inside it; a
     // collapsed group has no padding row below, so the header pads itself.
-    .padding(.top, SidebarGroupCardFill.verticalInset + 2)
+    .padding(
+      .top,
+      SidebarGroupCardFill.verticalInset + 2 + (isCollapsed ? 0 : SidebarGroupCardFill.expandedHeaderTopSpace)
+    )
     .padding(.bottom, isCollapsed ? SidebarGroupCardFill.verticalInset + 2 : 2)
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }

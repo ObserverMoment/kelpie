@@ -20,6 +20,10 @@ struct SidebarGroupCardFill: View {
   /// than the visible margin it produces.
   static let horizontalInset: CGFloat = 8
   static let verticalInset: CGFloat = 4
+  /// Extra room inside an expanded card: above the header and below the row
+  /// that closes it, so the rows don't sit tight against the card edges.
+  static let expandedHeaderTopSpace: CGFloat = 4
+  static let closingRowBottomSpace: CGFloat = 8
 
   let edge: SidebarGroupCardEdge
   @Environment(\.colorScheme) private var colorScheme
@@ -40,12 +44,14 @@ struct SidebarGroupCardFill: View {
 }
 
 extension View {
-  /// Paints this row's slice of a group card when it sits inside one; rows
-  /// outside a card (`nil`) keep the sidebar's own background.
+  /// Paints this row's slice of a group card when it sits inside one, and
+  /// gives the row that closes the card room below it; rows outside a card
+  /// (`nil`) keep the sidebar's own background.
   @ViewBuilder
   func groupCardRowBackground(_ edge: SidebarGroupCardEdge?) -> some View {
     if let edge {
-      listRowBackground(SidebarGroupCardFill(edge: edge))
+      padding(.bottom, edge == .bottom ? SidebarGroupCardFill.closingRowBottomSpace : 0)
+        .listRowBackground(SidebarGroupCardFill(edge: edge))
     } else {
       self
     }
