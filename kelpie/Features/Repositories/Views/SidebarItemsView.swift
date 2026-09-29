@@ -549,6 +549,8 @@ struct SidebarFolderRow: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
 
+  @State private var isHovered = false
+
   var body: some View {
     let isRepositoryRemoving = store.state.isRemovingRepository(repository)
     SidebarItemRow(
@@ -560,6 +562,79 @@ struct SidebarFolderRow: View {
       moveMode: .alwaysEnabled,
       shortcutHint: shortcutHint
     )
+    // Folders have no section header, so their ellipsis menu rides the row.
+    .overlay(alignment: .trailing) {
+      if isHovered {
+        SidebarFolderActionsMenu(
+          repositoryID: repository.id,
+          rowID: rowID,
+          isRemote: repository.host != nil,
+          isRepositoryRemoving: isRepositoryRemoving,
+          store: store
+        )
+        .padding(.trailing, 4)
+      }
+    }
+    .onHover { isHovered = $0 }
+  }
+}
+
+/// The folder management entries shared by the folder row's hover ellipsis
+/// menu and its right-click menu: appearance, settings, and group membership.
+private struct SidebarFolderManagementItems: View {
+  let repositoryID: Repository.ID
+  let rowID: Worktree.ID
+  var isDisabled = false
+  let store: StoreOf<RepositoriesFeature>
+
+  var body: some View {
+    // Folder rows read customization from their per-row bucket Item, so
+    // route through the worktree path rather than the section title.
+    Button("Customize Appearance…", systemImage: "paintbrush") {
+      store.send(.requestCustomizeWorktree(rowID, repositoryID))
+    }
+    .help("Set a custom title or color")
+    .disabled(isDisabled)
+    Button("Folder Settings…", systemImage: "gear") {
+      store.send(.openRepositorySettings(repositoryID))
+    }
+    .help("Open folder settings")
+    SidebarGroupMembershipMenu(repositoryID: repositoryID, isDisabled: isDisabled, store: store)
+  }
+}
+
+/// Folder counterpart of the repository section's ellipsis menu.
+private struct SidebarFolderActionsMenu: View {
+  let repositoryID: Repository.ID
+  let rowID: Worktree.ID
+  let isRemote: Bool
+  let isRepositoryRemoving: Bool
+  let store: StoreOf<RepositoriesFeature>
+
+  var body: some View {
+    Menu {
+      SidebarFolderManagementItems(
+        repositoryID: repositoryID,
+        rowID: rowID,
+        isDisabled: isRepositoryRemoving,
+        store: store
+      )
+      Divider()
+      Button(
+        isRemote ? "Remove Remote Folder…" : "Remove Folder…",
+        systemImage: "folder.badge.minus",
+        role: .destructive
+      ) {
+        store.send(.requestDeleteRepository(repositoryID))
+      }
+      .help(isRemote ? "Remove this remote folder (remote files are untouched)" : "Remove Folder")
+      .disabled(isRepositoryRemoving)
+    } label: {
+      Image(systemName: "ellipsis")
+        .accessibilityLabel("Folder Options")
+        .contentShape(Rectangle())
+    }
+    .menuStyle(.secondaryToolbar)
   }
 }
 
@@ -681,15 +756,7 @@ private struct SidebarItemContextMenu: View {
         // bucket Item. Route through the same worktree path so the folder row picks up the title
         // / color the user picks (section.title would only tint a folder-section header, but
         // folder sections render with an empty header).
-        Button("Customize Appearance…", systemImage: "paintbrush") {
-          store.send(.requestCustomizeWorktree(rowID, repositoryID))
-        }
-        .help("Set a custom title or color")
-        // Folder rows have no section ellipsis menu, so Settings lives here.
-        Button("Folder Settings…", systemImage: "gear") {
-          store.send(.openRepositorySettings(repositoryID))
-        }
-        .help("Open folder settings")
+        SidebarFolderManagementItems(repositoryID: repositoryID, rowID: rowID, store: store)
         // Remote folders have no section header either, so the connection editor
         // (offered on a git remote's section menu) lives here for them.
         if row.host != nil {

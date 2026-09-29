@@ -948,6 +948,10 @@ struct SidebarPersistenceMigratorTests {
       buckets: [.unpinned: SidebarState.Bucket(items: [WorktreeID("/tmp/notes/"): .init()])]
     )
     slashed.focusedWorktreeID = WorktreeID("me@box/srv/repo/wt/")
+    // A group listing the slashed remote id must follow the re-key.
+    let groupID = RepositoryGroupID("g1")
+    slashed.groups[groupID] = SidebarState.RepositoryGroup(
+      id: groupID, name: "Work", repositoryIDs: [RepositoryID("me@box/srv/repo/"), RepositoryID("/tmp/notes/")])
     try storage.save(JSONEncoder().encode(slashed), KelpiePaths.sidebarURL)
 
     try withDependencies {
@@ -981,6 +985,8 @@ struct SidebarPersistenceMigratorTests {
         migrated?.sections[RepositoryID("/tmp/notes/")]?.buckets[.unpinned]?
           .items[WorktreeID("/tmp/notes/")] != nil)
       #expect(migrated?.focusedWorktreeID == WorktreeID("me@box/srv/repo/wt"))
+      #expect(
+        migrated?.groups[groupID]?.repositoryIDs == [RepositoryID("me@box/srv/repo"), RepositoryID("/tmp/notes/")])
 
       // Idempotent: the v3 stamp short-circuits a second pass.
       SidebarPersistenceMigrator.migrateRemoteSlashIDsIfNeeded(fileExists: fileExists, readFile: readFile)

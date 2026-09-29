@@ -818,6 +818,7 @@ enum SidebarPersistenceMigrator {
     }
     state.sections = rekeyedSections
     state.focusedWorktreeID = state.focusedWorktreeID.map { WorktreeID(transform($0.rawValue)) }
+    state.rekeyGroupMembers { RepositoryID(transform($0.rawValue)) }
     state.schemaVersion = version
   }
 

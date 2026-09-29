@@ -1,6 +1,6 @@
 import Foundation
-import OrderedCollections
 import KelpieSettingsShared
+import OrderedCollections
 
 /// User-curated sidebar state persisted to `~/.kelpie/sidebar.json`.
 ///
@@ -25,6 +25,12 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
   var schemaVersion: Int
   var sections: OrderedDictionary<Repository.ID, Section>
   var focusedWorktreeID: Worktree.ID?
+  /// User-defined accordion groups of repositories. Membership lives on the
+  /// group; the top-down order of a group's members is the `sections` key
+  /// order, so there is exactly one persisted sidebar order. Additive key
+  /// with no schema bump: a build that predates groups decodes the blob
+  /// fine, and its next save drops the key, so a downgrade loses groups.
+  var groups: OrderedDictionary<RepositoryGroupID, RepositoryGroup>
 
   /// Memberwise initializer. `schemaVersion` defaults to `0`, meaning
   /// "not migrated yet, or migrator failed". The boot-time migrator
@@ -34,17 +40,20 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
   init(
     schemaVersion: Int = 0,
     sections: OrderedDictionary<Repository.ID, Section> = [:],
-    focusedWorktreeID: Worktree.ID? = nil
+    focusedWorktreeID: Worktree.ID? = nil,
+    groups: OrderedDictionary<RepositoryGroupID, RepositoryGroup> = [:]
   ) {
     self.schemaVersion = schemaVersion
     self.sections = sections
     self.focusedWorktreeID = focusedWorktreeID
+    self.groups = groups
   }
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion
     case sections
     case focusedWorktreeID
+    case groups
   }
 
   init(from decoder: any Decoder) throws {
@@ -59,6 +68,13 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
         forKey: .sections
       ) ?? [:]
     self.focusedWorktreeID = try container.decodeIfPresent(Worktree.ID.self, forKey: .focusedWorktreeID)
+    // Additive field: blobs written before groups existed have no key. `try?`
+    // so one malformed group entry costs the groups, not every pin and title.
+    self.groups =
+      (try? container.decodeIfPresent(
+        OrderedDictionary<RepositoryGroupID, RepositoryGroup>.self,
+        forKey: .groups
+      )) ?? [:]
   }
 
   func encode(to encoder: any Encoder) throws {
@@ -69,6 +85,56 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     try container.encode(schemaVersion, forKey: .schemaVersion)
     try container.encode(sections, forKey: .sections)
     try container.encodeIfPresent(focusedWorktreeID, forKey: .focusedWorktreeID)
+    // Omit when empty so blobs for users who never made a group stay
+    // byte-identical to what older builds wrote.
+    if !groups.isEmpty {
+      try container.encode(groups, forKey: .groups)
+    }
+  }
+
+  /// A user-named accordion of repositories. Only `name`, the open/closed
+  /// bit, and membership are stored; row order comes from `sections`.
+  nonisolated struct RepositoryGroup: Equatable, Sendable, Codable, Identifiable {
+    var id: RepositoryGroupID
+    var name: String
+    var collapsed: Bool
+    /// Member repositories. Membership only: readers order members by
+    /// their position in `sections`, so this array is never sorted.
+    var repositoryIDs: [Repository.ID]
+
+    init(id: RepositoryGroupID, name: String, collapsed: Bool = false, repositoryIDs: [Repository.ID] = []) {
+      self.id = id
+      self.name = name
+      self.collapsed = collapsed
+      self.repositoryIDs = repositoryIDs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+      case id
+      case name
+      case collapsed
+      case repositoryIDs
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      self.id = try container.decode(RepositoryGroupID.self, forKey: .id)
+      self.name = try container.decode(String.self, forKey: .name)
+      self.collapsed = try container.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
+      self.repositoryIDs = try container.decodeIfPresent([Repository.ID].self, forKey: .repositoryIDs) ?? []
+    }
+
+    func encode(to encoder: any Encoder) throws {
+      var container = encoder.container(keyedBy: CodingKeys.self)
+      try container.encode(id, forKey: .id)
+      try container.encode(name, forKey: .name)
+      if collapsed {
+        try container.encode(collapsed, forKey: .collapsed)
+      }
+      if !repositoryIDs.isEmpty {
+        try container.encode(repositoryIDs, forKey: .repositoryIDs)
+      }
+    }
   }
 
   nonisolated enum BucketID: String, Codable, Hashable, Sendable {
@@ -568,6 +634,143 @@ nonisolated extension SidebarState {
       bucket.items.updateValue(item, forKey: worktreeID, insertingAt: position)
     } else {
       bucket.items[worktreeID] = item
+    }
+  }
+}
+
+// MARK: - Repository groups.
+
+nonisolated extension SidebarState {
+  /// The group `repositoryID` belongs to, or `nil` when ungrouped.
+  func groupID(containing repositoryID: Repository.ID) -> RepositoryGroupID? {
+    groups.values.first { $0.repositoryIDs.contains(repositoryID) }?.id
+  }
+
+  /// Register a new, empty, expanded group. No-op when `id` already exists.
+  mutating func addGroup(id: RepositoryGroupID, name: String) {
+    guard groups[id] == nil else { return }
+    groups[id] = RepositoryGroup(id: id, name: name)
+  }
+
+  mutating func renameGroup(_ id: RepositoryGroupID, to name: String) {
+    groups[id]?.name = name
+  }
+
+  /// Dissolve `id`. Members keep their `sections` slot and simply render
+  /// ungrouped again; no repository is removed.
+  mutating func removeGroup(_ id: RepositoryGroupID) {
+    groups.removeValue(forKey: id)
+  }
+
+  /// Move `repositoryID` into `groupID` (or out of every group when `nil`).
+  /// Also re-slots its `sections` key so the group's members stay contiguous:
+  /// joining lands after the group's last member, leaving lands after the
+  /// group's block. Membership is written even when the repo has no
+  /// `sections` entry yet; the next reconcile seeds one.
+  mutating func assignGroup(of repositoryID: Repository.ID, to groupID: RepositoryGroupID?) {
+    let targetExists = groupID.map { groups[$0] != nil } ?? true
+    guard targetExists else { return }
+    // Every group that lists the repo, so a duplicated membership (hand-edited
+    // or older blob) is repaired rather than half-removed.
+    let previousGroupIDs = groups.values.filter { $0.repositoryIDs.contains(repositoryID) }.map(\.id)
+    let alreadyThere = previousGroupIDs == groupID.map { [$0] } ?? []
+    guard !alreadyThere else { return }
+    for previousGroupID in previousGroupIDs {
+      groups[previousGroupID]?.repositoryIDs.removeAll { $0 == repositoryID }
+    }
+    if let groupID {
+      groups[groupID]?.repositoryIDs.append(repositoryID)
+    }
+    // Anchor after the last member of the block the repo is joining or
+    // leaving; when there is none the key keeps its current slot.
+    let anchorGroupID = groupID ?? previousGroupIDs.first
+    guard let anchorGroupID,
+      let anchorMembers = groups[anchorGroupID]?.repositoryIDs.filter({ $0 != repositoryID }),
+      let anchor = sections.keys.last(where: { anchorMembers.contains($0) }),
+      let section = sections.removeValue(forKey: repositoryID),
+      let anchorIndex = sections.index(forKey: anchor)
+    else { return }
+    sections.updateValue(section, forKey: repositoryID, insertingAt: anchorIndex + 1)
+  }
+
+  /// `ids` split into each group's members (in `ids` order) and the
+  /// ungrouped remainder. Ids in `ungroupable` count as ungrouped even when a
+  /// group lists them; the sidebar can't draw those inside a card.
+  func memberBuckets(
+    of ids: [Repository.ID], excluding ungroupable: Set<Repository.ID>
+  ) -> (byGroup: [RepositoryGroupID: [Repository.ID]], ungrouped: [Repository.ID]) {
+    let groupIDByRepositoryID: [Repository.ID: RepositoryGroupID] = Dictionary(
+      groups.values.flatMap { group in group.repositoryIDs.map { ($0, group.id) } },
+      uniquingKeysWith: { first, _ in first }
+    )
+    let grouped = ids.compactMap { id -> (groupID: RepositoryGroupID, repositoryID: Repository.ID)? in
+      guard !ungroupable.contains(id), let groupID = groupIDByRepositoryID[id] else { return nil }
+      return (groupID, id)
+    }
+    let byGroup = Dictionary(grouping: grouped, by: \.groupID).mapValues { $0.map(\.repositoryID) }
+    let groupedSet = Set(grouped.map(\.repositoryID))
+    return (byGroup, ids.filter { !groupedSet.contains($0) })
+  }
+
+  /// Sidebar top-down order for `persisted` (the `sections` key order
+  /// filtered to live repos): every group's members in group order, each
+  /// group's members in persisted order, then the ungrouped repos in
+  /// persisted order. Groups always sit above ungrouped repositories.
+  func groupedOrder(of persisted: [Repository.ID], excluding ungroupable: Set<Repository.ID>) -> [Repository.ID] {
+    let buckets = memberBuckets(of: persisted, excluding: ungroupable)
+    return groups.keys.flatMap { buckets.byGroup[$0] ?? [] } + buckets.ungrouped
+  }
+
+  /// Rewrite the `sections` key order to the rendered (grouped-first) order
+  /// so every consumer of the key order agrees with the sidebar. `knownIDs`
+  /// is the live repository order: keys it lists come first in their current
+  /// order, live ids without a section yet follow, unknown keys keep the tail.
+  mutating func normalizeSectionOrder(knownIDs: [Repository.ID], excluding ungroupable: Set<Repository.ID>) {
+    let knownSet = Set(knownIDs)
+    let keyed = Set(sections.keys)
+    let persisted = sections.keys.filter(knownSet.contains) + knownIDs.filter { !keyed.contains($0) }
+    reorderSections(to: groupedOrder(of: persisted, excluding: ungroupable))
+  }
+
+  /// Rewrite every group member id through `transform`, for repository id
+  /// re-keys (remote connection edits, persistence migrations). Ids that
+  /// collide after the rewrite keep their first occurrence, in group order,
+  /// matching how the migrator dedupes colliding section keys.
+  mutating func rekeyGroupMembers(_ transform: (Repository.ID) -> Repository.ID) {
+    var claimed: Set<Repository.ID> = []
+    groups = groups.mapValues { group in
+      var rekeyed = group
+      rekeyed.repositoryIDs = group.repositoryIDs.map(transform).filter { claimed.insert($0).inserted }
+      return rekeyed
+    }
+  }
+
+  /// Rewrite the `sections` key order to `ids`. Sections for repos still
+  /// loading / not yet seen are reliably absent from `ids`; they keep their
+  /// original relative order at the tail so a live-row reorder doesn't
+  /// silently reshuffle curation on them.
+  mutating func reorderSections(to ids: [Repository.ID]) {
+    var reordered: OrderedDictionary<Repository.ID, Section> = [:]
+    for id in ids {
+      reordered[id] = sections[id] ?? .init()
+    }
+    for (id, section) in sections where reordered[id] == nil {
+      reordered[id] = section
+    }
+    sections = reordered
+  }
+
+  /// `groups` minus members whose repository is gone. Groups themselves
+  /// survive empty so a user's named bucket isn't lost when its last repo is
+  /// removed.
+  static func pruningGroupMembers(
+    of groups: OrderedDictionary<RepositoryGroupID, RepositoryGroup>,
+    keeping availableRepositoryIDs: Set<Repository.ID>
+  ) -> OrderedDictionary<RepositoryGroupID, RepositoryGroup> {
+    groups.mapValues { group in
+      var pruned = group
+      pruned.repositoryIDs.removeAll { !availableRepositoryIDs.contains($0) }
+      return pruned
     }
   }
 }

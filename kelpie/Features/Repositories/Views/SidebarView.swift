@@ -1,12 +1,14 @@
 import ComposableArchitecture
-import Sharing
 import KelpieSettingsShared
+import Sharing
 import SwiftUI
 
 struct SidebarView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
   @Shared(.settingsFile) private var settingsFile
+  @State private var isCreatingGroup = false
+  @State private var newGroupName = ""
 
   var body: some View {
     let state = store.state
@@ -22,6 +24,22 @@ struct SidebarView: View {
       terminalManager: terminalManager
     )
     .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          newGroupName = ""
+          isCreatingGroup = true
+        } label: {
+          Label {
+            Text("New Group…")
+          } icon: {
+            Image(systemName: "square.grid.3x1.folder.badge.plus")
+              .offset(y: -1)
+              .accessibilityHidden(true)
+          }
+        }
+        .labelStyle(.iconOnly)
+        .help("New Group: a named, collapsible set of repos and folders")
+      }
       ToolbarItem(placement: .primaryAction) {
         Menu {
           Button {
@@ -56,6 +74,13 @@ struct SidebarView: View {
         .labelStyle(.iconOnly)
         .help("Add Repository, Folder, or Remote")
       }
+    }
+    .alert("New Group", isPresented: $isCreatingGroup) {
+      TextField("Name", text: $newGroupName)
+      Button("Create") {
+        store.send(.createRepositoryGroup(name: newGroupName))
+      }
+      Button("Cancel", role: .cancel) {}
     }
     .sheet(item: $store.scope(state: \.remoteConnectionForm, action: \.remoteConnectionForm)) { formStore in
       RemoteConnectionFormView(store: formStore)

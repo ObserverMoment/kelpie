@@ -218,3 +218,21 @@ nonisolated enum WorktreeLocation: Hashable, Sendable {
     }
   }
 }
+
+/// Branded identifier for a user-defined sidebar `RepositoryGroup`. A UUID
+/// string minted at creation; encodes as a single string like the other ids.
+nonisolated struct RepositoryGroupID: Hashable, Sendable, Codable, CustomStringConvertible {
+  let rawValue: String
+
+  init(_ rawValue: String) { self.rawValue = rawValue }
+
+  var description: String { rawValue }
+
+  init(from decoder: any Decoder) throws {
+    self.rawValue = try decoder.singleValueContainer().decode(String.self)
+  }
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.singleValueContainer()
+    try container.encode(rawValue)
+  }
+}

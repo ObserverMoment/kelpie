@@ -661,8 +661,12 @@ struct SaveRemoteConnectionTests {
       $settingsFile.withLock { $0.remoteRepositoryRoots = [original.id.rawValue] }
       // Seed per-repo customization under the original id; the re-key must drop it.
       @Shared(.sidebar) var sidebar
+      let groupID = RepositoryGroupID("g1")
       $sidebar.withLock {
         $0.sections[originalRepositoryID, default: .init()].title = "Custom Title"
+        // Group membership must follow the re-keyed id rather than be orphaned.
+        $0.addGroup(id: groupID, name: "Work")
+        $0.groups[groupID]?.repositoryIDs = [originalRepositoryID]
       }
       #expect(store.state.sidebar.sections[originalRepositoryID] != nil)
 
@@ -684,6 +688,8 @@ struct SaveRemoteConnectionTests {
 
       // The orphaned customization under the old id is dropped.
       #expect(store.state.sidebar.sections[originalRepositoryID] == nil)
+      #expect(
+        store.state.sidebar.groups[groupID]?.repositoryIDs == [RepositoriesFeature.remoteRepositoryID(for: edited)])
       // The replaced config persists at the new path.
       #expect(remoteRepositories().first?.normalizedRemotePath == "/home/me/other")
     }

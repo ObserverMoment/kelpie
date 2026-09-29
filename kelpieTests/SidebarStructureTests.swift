@@ -1513,16 +1513,7 @@ struct SidebarStructureTests {
   )
 
   private func repositorySectionIDs(in structure: SidebarStructure) -> [Repository.ID] {
-    structure.sections.compactMap { section in
-      switch section {
-      case .repository(let id, _), .folder(let id, _),
-        .failedRepository(let id, _, _, _, _),
-        .environmentBlockedRepository(let id, _, _, _):
-        return id
-      case .highlight, .placeholder:
-        return nil
-      }
-    }
+    structure.sections.compactMap(\.repositoryID)
   }
 
   private func makeRepository(path: String) -> Repository {

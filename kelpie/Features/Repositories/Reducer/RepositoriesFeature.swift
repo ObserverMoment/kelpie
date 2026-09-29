@@ -2,9 +2,9 @@ import AppKit
 import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
+import KelpieSettingsShared
 import OrderedCollections
 import PostHog
-import KelpieSettingsShared
 import SwiftUI
 
 private enum CancelID {
@@ -407,6 +407,15 @@ struct RepositoriesFeature {
     /// Expand or collapse every sidebar group at once. Expanding also clears
     /// every nested branch-group prefix so the tree opens fully.
     case setAllSidebarGroupsExpanded(Bool)
+    /// User-defined repository groups; handled by `repositoryGroupsReducer`.
+    case createRepositoryGroup(name: String)
+    case renameRepositoryGroup(RepositoryGroupID, name: String)
+    case removeRepositoryGroup(RepositoryGroupID)
+    /// `nil` moves the repository out of whatever group holds it.
+    case moveRepositoryToGroup(Repository.ID, RepositoryGroupID?)
+    case repositoryGroupExpansionChanged(RepositoryGroupID, isExpanded: Bool)
+    /// Reorder groups among themselves; offsets index `SidebarStructure.orderedGroupIDs`.
+    case repositoryGroupsMoved(IndexSet, Int)
     case selectArchivedWorktrees
     case setSidebarSelectedWorktreeIDs(Set<Worktree.ID>)
     case openRepositories([URL])
@@ -518,6 +527,7 @@ struct RepositoriesFeature {
       selectionWasRemoved: Bool,
       nextSelection: Worktree.ID?
     )
+    /// Offsets index the rendered top-down order (`SidebarStructure.reorderableRepositoryIDs`).
     case repositoriesMoved(IndexSet, Int)
     case pinnedWorktreesMoved(repositoryID: Repository.ID, IndexSet, Int)
     case unpinnedWorktreesMoved(repositoryID: Repository.ID, IndexSet, Int)
@@ -746,7 +756,11 @@ struct RepositoriesFeature {
       }
     }
     if let originalRepositoryID, originalRepositoryID != newID {
-      state.$sidebar.withLock { $0.sections[originalRepositoryID] = nil }
+      state.$sidebar.withLock { sidebar in
+        sidebar.sections[originalRepositoryID] = nil
+        // Membership follows the re-keyed id so the repo stays in its group.
+        sidebar.rekeyGroupMembers { $0 == originalRepositoryID ? newID : $0 }
+      }
     }
     state.remoteConnectionForm = nil
     // Full reload so the remote repo materializes even with no local roots.
@@ -1557,26 +1571,21 @@ struct RepositoriesFeature {
         )
 
       case .repositoriesMoved(let offsets, let destination):
-        var ordered = state.orderedRepositoryIDs()
+        // Index space is the rendered top-down order (grouped first), not the
+        // raw key order; the rewrite below makes the two agree again. No
+        // `withAnimation` here: its synchronous flush would run view bodies
+        // inside this reducer's task-local scope, where an isolated deinit
+        // aborts (#784). The List animates the reorder itself.
+        var ordered = state.groupedRepositoryOrder()
         guard !offsets.isEmpty, ordered.indices.contains(offsets.min() ?? 0),
           destination <= ordered.count
         else { return .none }
         ordered.move(fromOffsets: offsets, toOffset: destination)
-        withAnimation(.snappy(duration: 0.2)) {
-          state.$sidebar.withLock { sidebar in
-            var reordered: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
-            for id in ordered {
-              reordered[id] = sidebar.sections[id] ?? .init()
-            }
-            // Sections for repos still loading / not yet seen are
-            // reliably absent from `ordered`; append them in their
-            // original relative order so a live-row reorder doesn't
-            // silently reshuffle curation on them.
-            for (id, section) in sidebar.sections where reordered[id] == nil {
-              reordered[id] = section
-            }
-            sidebar.sections = reordered
-          }
+        // Regroup after the move so a destination inside another run still
+        // leaves the key order agreeing with what the sidebar renders.
+        let ungroupable = state.ungroupableRepositoryIDs
+        state.$sidebar.withLock { sidebar in
+          sidebar.reorderSections(to: sidebar.groupedOrder(of: ordered, excluding: ungroupable))
         }
         return .none
 
@@ -3928,6 +3937,9 @@ struct RepositoriesFeature {
         // entry), so collapsing must materialize one for every repo.
         let repositoryIDs = state.repositories.map(\.id)
         state.$sidebar.withLock { sidebar in
+          for groupID in sidebar.groups.keys {
+            sidebar.groups[groupID]?.collapsed = !isExpanded
+          }
           for repositoryID in repositoryIDs {
             guard isExpanded else {
               // Collapse keeps branch-group prefixes so each group's layout
@@ -4011,6 +4023,10 @@ struct RepositoriesFeature {
         let containingBucket = state.sidebar.currentBucket(of: worktreeID, in: repositoryID)
         state.$sidebar.withLock { sidebar in
           sidebar.sections[repositoryID, default: .init()].collapsed = false
+          // A collapsed user group hides the whole repository; open it too.
+          if let groupID = sidebar.groupID(containing: repositoryID) {
+            sidebar.groups[groupID]?.collapsed = false
+          }
           // Uncollapse any ancestor branch prefix so a reveal / deeplink to
           // `feature/tools/api` doesn't leave the row hidden inside a
           // collapsed `feature/tools` group header.
@@ -4647,6 +4663,12 @@ struct RepositoriesFeature {
       case .repositoryCustomization:
         return .none
 
+      case .createRepositoryGroup, .renameRepositoryGroup, .removeRepositoryGroup,
+        .moveRepositoryToGroup, .repositoryGroupExpansionChanged, .repositoryGroupsMoved:
+        // Handled by `repositoryGroupsReducer` (RepositoriesFeature+Groups.swift);
+        // the main switch is at type-checker capacity.
+        return .none
+
       case .requestCustomizeWorktree,
         .setWorktreeAppearance,
         .worktreeCustomization:
@@ -4771,6 +4793,7 @@ struct RepositoriesFeature {
       .ifLet(\.$cloneRepositoryForm, action: \.cloneRepositoryForm) {
         CloneRepositoryFormFeature()
       }
+    Self.repositoryGroupsReducer
     worktreeArchiveReducer
     worktreeRemovalReducer
     worktreeCreateInRepoReducer
@@ -5943,6 +5966,19 @@ extension RepositoriesFeature.State {
     return ordered
   }
 
+  /// Repositories the sidebar can't draw inside a group card (load failure
+  /// or environment-blocked git); they render in the ungrouped run instead.
+  /// `AppFeature` computes the same set inline for terminal-prune protection.
+  var ungroupableRepositoryIDs: Set<Repository.ID> {
+    Set(loadFailuresByID.keys).union(environmentBlockedRepositoryIDs)
+  }
+
+  /// The rendered top-down repository order (groups first): the one index
+  /// space the structure's drag mapping and the reorder arms share.
+  func groupedRepositoryOrder() -> [Repository.ID] {
+    sidebar.groupedOrder(of: orderedRepositoryIDs(), excluding: ungroupableRepositoryIDs)
+  }
+
   func repositoryID(for worktreeID: Worktree.ID?) -> Repository.ID? {
     selectedRow(for: worktreeID)?.repositoryID
   }
@@ -6847,10 +6883,22 @@ extension RepositoriesFeature.State {
       into: &rebuilt,
     )
 
+    // Group membership follows the section roster: a member whose repo was
+    // removed is dropped, the group itself stays. Only once the roster is
+    // trustworthy (`pruneLivenessAgainstRoster`): a dropped section is
+    // re-seeded on the next tick, a dropped membership never is.
+    let prunedGroups =
+      pruneLivenessAgainstRoster
+      ? SidebarState.pruningGroupMembers(of: sidebar.groups, keeping: availableRepoIDs.union(rebuilt.keys))
+      : sidebar.groups
+
     // Equality-gate the write so branch-flutter reloads don't re-encode
     // `sidebar.json` on every tick.
-    guard rebuilt != sidebar.sections else { return }
-    $sidebar.withLock { sidebar in sidebar.sections = rebuilt }
+    guard rebuilt != sidebar.sections || prunedGroups != sidebar.groups else { return }
+    $sidebar.withLock { sidebar in
+      sidebar.sections = rebuilt
+      sidebar.groups = prunedGroups
+    }
   }
 
   /// Prunes each curated bucket in place: drops the main worktree (it renders in

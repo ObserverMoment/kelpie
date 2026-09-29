@@ -1,8 +1,8 @@
 import AppKit
 import ComposableArchitecture
+import KelpieSettingsShared
 import OrderedCollections
 import Sharing
-import KelpieSettingsShared
 import SwiftUI
 
 struct SidebarListView: View {
@@ -46,8 +46,34 @@ struct SidebarListView: View {
     }
 
     return ScrollViewReader { scrollProxy in
+      // Three runs, three `ForEach`es, so each run's `.onMove` only sees its
+      // own indices: groups reorder via their menu, members reorder inside
+      // their group, ungrouped repos reorder among themselves. Membership
+      // changes through the Add to Group menu.
+      let groupSections = structure.groupBlockSections
       List(selection: selection) {
-        ForEach(structure.sections) { section in
+        ForEach(structure.leadingSections) { section in
+          SidebarSectionDispatcher(
+            section: section,
+            structure: structure,
+            shortcutHintByID: shortcutHintByID,
+            store: store,
+            terminalManager: terminalManager
+          )
+        }
+        ForEach(Array(groupSections.enumerated()), id: \.element.id) { index, section in
+          SidebarSectionDispatcher(
+            section: section,
+            structure: structure,
+            shortcutHintByID: shortcutHintByID,
+            allowsReordering: sectionSort.allowsReordering,
+            groupIndex: index,
+            groupCount: groupSections.count,
+            store: store,
+            terminalManager: terminalManager
+          )
+        }
+        ForEach(structure.ungroupedSections) { section in
           SidebarSectionDispatcher(
             section: section,
             structure: structure,
@@ -59,11 +85,8 @@ struct SidebarListView: View {
         .onMove(
           perform: sectionSort.allowsReordering
             ? { offsets, destination in
-              handleRepositoryMove(
-                offsets: offsets,
-                destination: destination,
-                structure: structure
-              )
+              guard let move = structure.ungroupedMove(offsets: offsets, destination: destination) else { return }
+              store.send(.repositoriesMoved(move.offsets, move.destination))
             } : nil)
       }
       .listStyle(.sidebar)
@@ -126,58 +149,6 @@ struct SidebarListView: View {
     }
   }
 
-  /// SwiftUI's `.onMove` reports offsets in the flat ForEach data array. The
-  /// structure exposes `reorderableRepositoryIDs` so we can translate a flat
-  /// move into the repository index space the `.repositoriesMoved` reducer
-  /// expects. Non-repo sections carry `.moveDisabled(true)` so they can't be
-  /// sources of a drag; the destination clamps below.
-  private func handleRepositoryMove(
-    offsets: IndexSet,
-    destination: Int,
-    structure: SidebarStructure
-  ) {
-    let repoIDs = structure.reorderableRepositoryIDs
-    guard !repoIDs.isEmpty else { return }
-    let sourceFlat = offsets.sorted()
-    let sectionsCount = structure.sections.count
-    // Map flat section indices to repo indices via SectionID matching. Skip
-    // any flat offset that doesn't correspond to a reorderable repo section.
-    var repoOffsets = IndexSet()
-    for index in sourceFlat where index < sectionsCount {
-      let section = structure.sections[index]
-      switch section {
-      case .repository(let repositoryID, _),
-        .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _, _),
-        .environmentBlockedRepository(let repositoryID, _, _, _):
-        if let repoIndex = repoIDs.firstIndex(of: repositoryID) {
-          repoOffsets.insert(repoIndex)
-        }
-      case .highlight, .placeholder:
-        continue
-      }
-    }
-    guard !repoOffsets.isEmpty else { return }
-    let clampedDestination = min(max(destination, 0), sectionsCount)
-    let repoDestination: Int
-    if clampedDestination >= sectionsCount {
-      repoDestination = repoIDs.count
-    } else {
-      let section = structure.sections[clampedDestination]
-      switch section {
-      case .repository(let repositoryID, _),
-        .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _, _),
-        .environmentBlockedRepository(let repositoryID, _, _, _):
-        repoDestination = repoIDs.firstIndex(of: repositoryID) ?? repoIDs.count
-      case .highlight, .placeholder:
-        // Dropping above the highlight prefix collapses to "before the first repo".
-        repoDestination = 0
-      }
-    }
-    store.send(.repositoriesMoved(repoOffsets, repoDestination))
-  }
-
   @MainActor
   private func revealPendingSidebarWorktree(
     _ pendingSidebarReveal: RepositoriesFeature.PendingSidebarReveal?,
@@ -202,6 +173,12 @@ private struct SidebarSectionDispatcher: View {
   let section: SidebarStructure.Section
   let structure: SidebarStructure
   let shortcutHintByID: [Worktree.ID: String]
+  /// Whether member drags may reorder (off while a display sort is active).
+  var allowsReordering = false
+  /// Position of a `.repositoryGroup` section among the groups, for its
+  /// Move Up / Move Down menu items.
+  var groupIndex = 0
+  var groupCount = 0
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
 
@@ -253,6 +230,20 @@ private struct SidebarSectionDispatcher: View {
           EmptyView()
         }
       }
+    case .repositoryGroup(let groupID, let name, let isCollapsed, let members):
+      SidebarRepositoryGroupSection(
+        groupID: groupID,
+        name: name,
+        isCollapsed: isCollapsed,
+        members: members,
+        groupIndex: groupIndex,
+        groupCount: groupCount,
+        structure: structure,
+        shortcutHintByID: shortcutHintByID,
+        allowsReordering: allowsReordering,
+        store: store,
+        terminalManager: terminalManager
+      )
     case .repository(let repositoryID, let groups):
       if let repository = store.state.repositories[id: repositoryID] {
         SidebarGitRepositorySection(
@@ -406,6 +397,7 @@ private struct SidebarSectionActionsView: View {
         }
         .help("Repository Settings")
       }
+      SidebarGroupMembershipMenu(repositoryID: repositoryID, isDisabled: isRemovingRepository, store: store)
       Divider()
       Button(
         isRemote ? "Remove Remote Repository…" : "Remove Repository…",
@@ -437,6 +429,264 @@ private struct SidebarSectionActionsView: View {
     .foregroundStyle(.secondary)
     .help("New Worktree")
     .padding(.trailing, 4)
+  }
+}
+
+/// A user-defined group as one list section drawn as a card: a header row,
+/// then each member's own header row and worktree rows, then a padding row.
+/// Plain rows rather than nested `Section`s because the sidebar list style
+/// paints `listRowBackground` on rows only, never on section headers.
+/// Membership changes through menus; members reorder among themselves by drag.
+private struct SidebarRepositoryGroupSection: View {
+  let groupID: RepositoryGroupID
+  let name: String
+  let isCollapsed: Bool
+  let members: [SidebarStructure.Section]
+  let groupIndex: Int
+  let groupCount: Int
+  let structure: SidebarStructure
+  let shortcutHintByID: [Worktree.ID: String]
+  let allowsReordering: Bool
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+
+  var body: some View {
+    // Empty header keeps `.listStyle(.sidebar)` from merging neighbouring
+    // cards; the header row below is an ordinary row so it takes the fill.
+    Section {
+      SidebarGroupHeaderRow(
+        groupID: groupID,
+        name: name,
+        isCollapsed: isCollapsed,
+        groupIndex: groupIndex,
+        groupCount: groupCount,
+        store: store
+      )
+      .listRowBackground(SidebarGroupCardFill(edge: .top))
+      .moveDisabled(true)
+      if !isCollapsed {
+        // Members reorder among themselves only: the move maps into this
+        // group's slice of the reorderable order, never across groups.
+        ForEach(members) { member in
+          SidebarGroupMemberRows(
+            member: member,
+            structure: structure,
+            shortcutHintByID: shortcutHintByID,
+            store: store,
+            terminalManager: terminalManager
+          )
+        }
+        .onMove(
+          perform: allowsReordering
+            ? { offsets, destination in
+              guard let move = structure.memberMove(in: groupID, offsets: offsets, destination: destination)
+              else { return }
+              store.send(.repositoriesMoved(move.offsets, move.destination))
+            } : nil)
+      }
+      SidebarGroupCardBottomPaddingRow()
+    } header: {
+      EmptyView()
+    }
+  }
+}
+
+/// Rows for one member of a group: a repository contributes a header row
+/// (chevron, name, actions) and, while expanded, its worktree rows; a folder
+/// contributes its single row.
+private struct SidebarGroupMemberRows: View {
+  let member: SidebarStructure.Section
+  let structure: SidebarStructure
+  let shortcutHintByID: [Worktree.ID: String]
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+
+  var body: some View {
+    switch member {
+    case .repository(let repositoryID, let groups):
+      if let repository = store.state.repositories[id: repositoryID] {
+        let section = store.state.sidebar.sections[repositoryID]
+        let isExpanded = store.state.isRepositoryExpanded(repositoryID)
+        // Resolve the header's inputs here so the header row itself tracks
+        // no store state; one observing body per member, not two.
+        SidebarGroupedRepositoryHeaderRow(
+          repository: repository,
+          customTitle: section?.title,
+          color: section?.color,
+          isExpanded: isExpanded,
+          isRemovingRepository: store.state.isRemovingRepository(repository),
+          isResolvingRemote: store.state.resolvingRemoteRepositoryIDs.contains(repositoryID),
+          store: store
+        )
+        .listRowBackground(SidebarGroupCardFill(edge: .middle))
+        if isExpanded {
+          SidebarItemsView(
+            repository: repository,
+            groups: groups,
+            shortcutHintByID: shortcutHintByID,
+            store: store,
+            terminalManager: terminalManager
+          )
+          .listRowBackground(SidebarGroupCardFill(edge: .middle))
+          if let hoistSummary = structure.hoistSummaryByRepositoryID[repositoryID] {
+            SidebarHoistSummaryRow(
+              repositoryName: Repository.sidebarDisplayName(custom: section?.title, fallback: repository.name),
+              summary: hoistSummary,
+              store: store
+            )
+            .listRowBackground(SidebarGroupCardFill(edge: .middle))
+          }
+        }
+      }
+    case .folder(let repositoryID, let rowID):
+      if let repository = store.state.repositories[id: repositoryID] {
+        SidebarFolderRow(
+          repository: repository,
+          rowID: rowID,
+          shortcutHint: shortcutHintByID[rowID],
+          store: store,
+          terminalManager: terminalManager
+        )
+        .listRowBackground(SidebarGroupCardFill(edge: .middle))
+      }
+    case .highlight, .placeholder, .failedRepository, .environmentBlockedRepository, .repositoryGroup:
+      EmptyView()
+    }
+  }
+}
+
+/// Group card header: disclosure chevron, folder glyph and name, and the
+/// group's ellipsis menu (revealed on hover, like a section's actions).
+private struct SidebarGroupHeaderRow: View {
+  let groupID: RepositoryGroupID
+  let name: String
+  let isCollapsed: Bool
+  let groupIndex: Int
+  let groupCount: Int
+  let store: StoreOf<RepositoriesFeature>
+  @State private var isHovered = false
+  @State private var isRenaming = false
+  @State private var draftName = ""
+
+  var body: some View {
+    HStack(spacing: 4) {
+      SidebarDisclosureChevron(isExpanded: !isCollapsed) {
+        store.send(.repositoryGroupExpansionChanged(groupID, isExpanded: isCollapsed))
+      }
+      .help(isCollapsed ? "Expand group" : "Collapse group")
+      Label(name, systemImage: "folder")
+        .foregroundStyle(.primary)
+        .appFontInheriting(.subheadline, weight: .semibold)
+      Spacer(minLength: 4)
+      Menu {
+        Button("Rename Group…", systemImage: "pencil") {
+          draftName = name
+          isRenaming = true
+        }
+        .help("Rename this group")
+        Divider()
+        // `toOffset` is the insertion index before removal, so moving one
+        // slot down targets two past the current index.
+        Button("Move Up", systemImage: "arrow.up") {
+          store.send(.repositoryGroupsMoved([groupIndex], groupIndex - 1))
+        }
+        .help("Move this group above the previous one")
+        .disabled(groupIndex == 0)
+        Button("Move Down", systemImage: "arrow.down") {
+          store.send(.repositoryGroupsMoved([groupIndex], groupIndex + 2))
+        }
+        .help("Move this group below the next one")
+        .disabled(groupIndex >= groupCount - 1)
+        Divider()
+        Button("Remove Group", systemImage: "folder.badge.minus", role: .destructive) {
+          store.send(.removeRepositoryGroup(groupID))
+        }
+        .help("Remove this group; its repositories stay in the sidebar")
+      } label: {
+        Image(systemName: "ellipsis")
+          .accessibilityLabel("Group Options")
+          .contentShape(Rectangle())
+      }
+      .menuStyle(.secondaryToolbar)
+      .opacity(isHovered ? 1 : 0)
+    }
+    // Top padding matches the card's top margin so the title sits inside it.
+    .padding(.top, SidebarGroupCardFill.verticalInset + 2)
+    .padding(.bottom, 2)
+    .contentShape(Rectangle())
+    .onHover { isHovered = $0 }
+    .alert("Rename Group", isPresented: $isRenaming) {
+      TextField("Name", text: $draftName)
+      Button("Rename") {
+        store.send(.renameRepositoryGroup(groupID, name: draftName))
+      }
+      Button("Cancel", role: .cancel) {}
+    }
+  }
+}
+
+/// A member repository's header inside a group card: chevron, the usual
+/// repository header, and the section actions revealed on hover.
+private struct SidebarGroupedRepositoryHeaderRow: View {
+  let repository: Repository
+  let customTitle: String?
+  let color: RepositoryColor?
+  let isExpanded: Bool
+  let isRemovingRepository: Bool
+  let isResolvingRemote: Bool
+  let store: StoreOf<RepositoriesFeature>
+  @State private var isHovered = false
+
+  var body: some View {
+    HStack(spacing: 4) {
+      SidebarDisclosureChevron(isExpanded: isExpanded) {
+        store.send(.repositoryExpansionChanged(repository.id, isExpanded: !isExpanded))
+      }
+      .help(isExpanded ? "Collapse repository" : "Expand repository")
+      RepoSectionHeaderView(
+        name: repository.name,
+        customTitle: customTitle,
+        color: color,
+        isRemoving: isRemovingRepository,
+        hostInfo: repository.host?.displayAuthority,
+        isResolving: isResolvingRemote
+      )
+      Spacer(minLength: 4)
+      SidebarSectionActionsView(
+        repositoryID: repository.id,
+        isRemovingRepository: isRemovingRepository,
+        isRemote: repository.host != nil,
+        store: store
+      )
+      .opacity(isHovered ? 1 : 0)
+    }
+    // Member titles indent by one chevron so they sit under the group title.
+    .padding(.leading, SidebarNestLayout.groupChevronWidth)
+    .padding(.vertical, 2)
+    .contentShape(Rectangle())
+    .onHover { isHovered = $0 }
+  }
+}
+
+/// The rotating chevron used by rows that stand in for a section header.
+private struct SidebarDisclosureChevron: View {
+  let isExpanded: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: "chevron.right")
+        .imageScale(.small)
+        .fontWeight(.semibold)
+        .foregroundStyle(.secondary)
+        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+        .frame(width: SidebarNestLayout.groupChevronWidth, height: SidebarNestLayout.groupChevronWidth)
+        .contentShape(Rectangle())
+        .accessibilityHidden(true)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(isExpanded ? "Collapse" : "Expand")
+    .animation(.easeOut(duration: 0.15), value: isExpanded)
   }
 }
 
