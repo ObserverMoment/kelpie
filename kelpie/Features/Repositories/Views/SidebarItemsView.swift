@@ -51,6 +51,9 @@ private struct SidebarItemsDragOverlay: View {
   let groupCardEdgeForLastRow: SidebarGroupCardEdge?
 
   var body: some View {
+    // Slots can be empty (an unpinned tail with every row pinned), so the card
+    // closes on the last slot that renders rows, not simply the last slot.
+    let closingGroupID = groups.last { !$0.rowIDs.isEmpty }?.id
     ForEach(groups) { group in
       SidebarItemGroupView(
         repository: repository,
@@ -62,7 +65,7 @@ private struct SidebarItemsDragOverlay: View {
         moveBehavior: group.moveBehavior,
         shortcutHintByID: shortcutHintByID,
         nestWorktreesByBranch: nestWorktreesByBranch && group.supportsBranchNesting,
-        groupCardEdgeForLastRow: groupCardEdgeForLastRow.map { group.id == groups.last?.id ? $0 : .middle }
+        groupCardEdgeForLastRow: groupCardEdgeForLastRow.map { group.id == closingGroupID ? $0 : .middle }
       )
     }
   }
