@@ -13,6 +13,13 @@ enum SidebarNestLayout {
   /// Width of a group header's disclosure chevron, narrower than the slot it
   /// sits in; the remainder is padded out after it.
   static let groupChevronWidth: CGFloat = 12
+  /// Leading inset of a repository (header and rows) inside a group card, so
+  /// its titles read as one column a step in from the group title.
+  static let groupMemberIndent: CGFloat = 4
+  /// The branch / pull-request glyph and its check badge, drawn smaller than
+  /// the leading slot so the title, not the icon, carries the row.
+  static let rowIconSize: CGFloat = 12
+  static let rowIconBadgeSize: CGFloat = 8
 }
 
 /// Repo identity carried alongside a sidebar row so the highlight sections
@@ -472,6 +479,8 @@ private struct IconContent: View, Equatable {
           .aspectRatio(contentMode: .fit)
           .foregroundStyle(isEmphasized ? AnyShapeStyle(.secondary) : icon.color)
           .opacity(isEmphasized ? 1 : 0.6)
+          .frame(width: SidebarNestLayout.rowIconSize, height: SidebarNestLayout.rowIconSize)
+          .accessibilityHidden(true)
       }
     }
     .frame(width: SidebarNestLayout.leadingSlotWidth, height: 16)
@@ -485,14 +494,14 @@ private struct IconContent: View, Equatable {
           .symbolVariant(.circle.fill)
           .symbolRenderingMode(.palette)
           .fontWeight(.black)
-          .frame(width: 10, height: 10)
+          .frame(width: SidebarNestLayout.rowIconBadgeSize, height: SidebarNestLayout.rowIconBadgeSize)
           .foregroundStyle(
             isEmphasized ? badgeColor : background,
             isEmphasized ? background : badgeColor,
           )
           .background(in: Circle())
           .accessibilityLabel(checkBadgeState.statusDescription)
-          .offset(x: 2, y: 2)
+          .offset(x: 1, y: 1)
       }
     }
     .help(helpText)

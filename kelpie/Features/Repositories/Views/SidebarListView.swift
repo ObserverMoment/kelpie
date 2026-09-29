@@ -509,6 +509,8 @@ private struct SidebarGroupMemberRows: View {
         let isExpanded = store.state.isRepositoryExpanded(repositoryID)
         // Resolve the header's inputs here so the header row itself tracks
         // no store state; one observing body per member, not two.
+        // The repository (header and rows) sits one small step in from the
+        // group title, as a single left-aligned column.
         SidebarGroupedRepositoryHeaderRow(
           repository: repository,
           customTitle: section?.title,
@@ -518,6 +520,7 @@ private struct SidebarGroupMemberRows: View {
           isResolvingRemote: store.state.resolvingRemoteRepositoryIDs.contains(repositoryID),
           store: store
         )
+        .padding(.leading, SidebarNestLayout.groupMemberIndent)
         .listRowBackground(SidebarGroupCardFill(edge: .middle))
         if isExpanded {
           SidebarItemsView(
@@ -527,6 +530,7 @@ private struct SidebarGroupMemberRows: View {
             store: store,
             terminalManager: terminalManager
           )
+          .padding(.leading, SidebarNestLayout.groupMemberIndent)
           .listRowBackground(SidebarGroupCardFill(edge: .middle))
           if let hoistSummary = structure.hoistSummaryByRepositoryID[repositoryID] {
             SidebarHoistSummaryRow(
@@ -534,6 +538,7 @@ private struct SidebarGroupMemberRows: View {
               summary: hoistSummary,
               store: store
             )
+            .padding(.leading, SidebarNestLayout.groupMemberIndent)
             .listRowBackground(SidebarGroupCardFill(edge: .middle))
           }
         }
@@ -547,6 +552,7 @@ private struct SidebarGroupMemberRows: View {
           store: store,
           terminalManager: terminalManager
         )
+        .padding(.leading, SidebarNestLayout.groupMemberIndent)
         .listRowBackground(SidebarGroupCardFill(edge: .middle))
       }
     case .highlight, .placeholder, .failedRepository, .environmentBlockedRepository, .repositoryGroup:
@@ -569,11 +575,9 @@ private struct SidebarGroupHeaderRow: View {
   @State private var draftName = ""
 
   var body: some View {
+    // Folder and name lead; the disclosure chevron sits at the trailing edge so
+    // member titles below can start at the card's left edge.
     HStack(spacing: 4) {
-      SidebarDisclosureChevron(isExpanded: !isCollapsed) {
-        store.send(.repositoryGroupExpansionChanged(groupID, isExpanded: isCollapsed))
-      }
-      .help(isCollapsed ? "Expand group" : "Collapse group")
       Label(name, systemImage: "folder")
         .foregroundStyle(.primary)
         .appFontInheriting(.subheadline, weight: .semibold)
@@ -609,6 +613,10 @@ private struct SidebarGroupHeaderRow: View {
       }
       .menuStyle(.secondaryToolbar)
       .opacity(isHovered ? 1 : 0)
+      SidebarDisclosureChevron(isExpanded: !isCollapsed) {
+        store.send(.repositoryGroupExpansionChanged(groupID, isExpanded: isCollapsed))
+      }
+      .help(isCollapsed ? "Expand group" : "Collapse group")
     }
     // Top padding matches the card's top margin so the title sits inside it.
     .padding(.top, SidebarGroupCardFill.verticalInset + 2)
@@ -660,8 +668,6 @@ private struct SidebarGroupedRepositoryHeaderRow: View {
       )
       .opacity(isHovered ? 1 : 0)
     }
-    // Member titles indent by one chevron so they sit under the group title.
-    .padding(.leading, SidebarNestLayout.groupChevronWidth)
     .padding(.vertical, 2)
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }
