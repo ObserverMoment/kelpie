@@ -462,7 +462,7 @@ private struct SidebarRepositoryGroupSection: View {
         groupCount: groupCount,
         store: store
       )
-      .listRowBackground(SidebarGroupCardFill(edge: .top))
+      .listRowBackground(SidebarGroupCardFill(edge: isCollapsed ? .single : .top))
       .moveDisabled(true)
       if !isCollapsed {
         // Members reorder among themselves only: the move maps into this
@@ -483,8 +483,8 @@ private struct SidebarRepositoryGroupSection: View {
               else { return }
               store.send(.repositoriesMoved(move.offsets, move.destination))
             } : nil)
+        SidebarGroupCardBottomPaddingRow()
       }
-      SidebarGroupCardBottomPaddingRow()
     } header: {
       EmptyView()
     }
@@ -578,9 +578,18 @@ private struct SidebarGroupHeaderRow: View {
     // Folder and name lead; the disclosure chevron sits at the trailing edge so
     // member titles below can start at the card's left edge.
     HStack(spacing: 4) {
-      Label(name, systemImage: "folder")
-        .foregroundStyle(.primary)
-        .appFontInheriting(.subheadline, weight: .semibold)
+      Label {
+        Text(name)
+      } icon: {
+        // The toolbar's "New Group" glyph minus its plus: SF Symbols has no
+        // badge-less variant, so the badge layer is painted clear.
+        Image(systemName: "square.grid.3x1.folder.badge.plus")
+          .symbolRenderingMode(.palette)
+          .foregroundStyle(.primary, .clear)
+          .accessibilityHidden(true)
+      }
+      .foregroundStyle(.primary)
+      .appFontInheriting(.subheadline, weight: .semibold)
       Spacer(minLength: 4)
       Menu {
         Button("Rename Group…", systemImage: "pencil") {
@@ -618,9 +627,10 @@ private struct SidebarGroupHeaderRow: View {
       }
       .help(isCollapsed ? "Expand group" : "Collapse group")
     }
-    // Top padding matches the card's top margin so the title sits inside it.
+    // Top padding matches the card's top margin so the title sits inside it; a
+    // collapsed group has no padding row below, so the header pads itself.
     .padding(.top, SidebarGroupCardFill.verticalInset + 2)
-    .padding(.bottom, 2)
+    .padding(.bottom, isCollapsed ? SidebarGroupCardFill.verticalInset + 2 : 2)
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }
     .alert("Rename Group", isPresented: $isRenaming) {

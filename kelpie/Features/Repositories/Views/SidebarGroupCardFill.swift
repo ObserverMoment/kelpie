@@ -1,12 +1,13 @@
 import SwiftUI
 
 /// Which slice of a group's card a row draws: the header row carries the top
-/// corners, the padding row the bottom ones, every other row a straight cut.
+/// corners, the padding row the bottom ones, every other row a straight cut,
+/// and a collapsed group's lone header row carries all four.
 enum SidebarGroupCardEdge: Equatable {
-  case top, middle, bottom
+  case top, middle, bottom, single
 
-  var roundsTop: Bool { self == .top }
-  var roundsBottom: Bool { self == .bottom }
+  var roundsTop: Bool { self == .top || self == .single }
+  var roundsBottom: Bool { self == .bottom || self == .single }
 }
 
 /// Row background that joins a group header, its member rows, and the last
