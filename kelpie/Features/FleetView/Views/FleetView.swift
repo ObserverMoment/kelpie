@@ -51,22 +51,22 @@ struct FleetView: View {
   }
 
   private var overviewBody: some View {
-      Group {
-        if store.mode == .pods {
-          PodsView(store: podsStore)
-        } else if store.structure.isEmpty {
-          ContentUnavailableView(
-            "No Active Agent Sessions",
-            systemImage: Self.symbolName,
-            description: Text("Launch an agent from the menu above, or start one in a terminal.")
-          )
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-          sessions
-        }
+    Group {
+      if store.mode == .pods {
+        PodsView(store: podsStore)
+      } else if store.structure.isEmpty {
+        ContentUnavailableView(
+          "No Active Agent Sessions",
+          systemImage: Self.symbolName,
+          description: Text("Launch an agent from the menu above, or start one in a terminal.")
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        sessions
       }
-      .padding(.horizontal, Self.horizontalPadding)
-      .padding(.top, 24)
+    }
+    .padding(.horizontal, Self.horizontalPadding)
+    .padding(.top, 24)
   }
 
   /// Title row above the launcher row, both left-aligned on a band that reads

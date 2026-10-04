@@ -848,8 +848,16 @@ struct AgentHookCommandTests {
       stdin: json
     )
     #expect(tty.contains("event=idle"))
-    let notify = try #require(Self.parseNotify(fromTTY: tty))
-    #expect(notify.body == "all done")
+    // The body now travels as `kind=mail` chunks (the whole message), so the excerpt
+    // notify is skipped; `stopWithoutMessageFallsBackToNotify` covers the other path.
+    #expect(!tty.contains("kind=notify"))
+    let chunk = try #require(
+      tty.matches(of: #/\u{1B}\]3008;(.*?)\u{1B}\\/#).map { String($0.1) }
+        .compactMap { AgentSignal.contextSignalFields(payload: $0) }
+        .compactMap { AgentPresenceOSC.parseMailChunk(id: $0.id, metadata: $0.metadata) }
+        .first)
+    var assembler = MailAssembler()
+    #expect(assembler.accept(chunk)?.body == "all done")
   }
 
   // MARK: - Session model / effort probe (real shell).
@@ -1215,6 +1223,54 @@ struct AgentHookCommandTests {
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     for await _ in exited {}
     return String(bytes: data, encoding: .utf8) ?? ""
+  }
+
+  // MARK: - Mail (full Stop message over chunked OSC).
+
+  @Test func stopComposesMailWithNotifyFallback() {
+    let command = AgentHookSettingsCommand.claudeStopCommand(agent: .claude)
+    #expect(command.contains("]3008;start=claude;kind=mail;id=%s;seq=%s;total=%s;body=%s"))
+    #expect(command.contains("keys=\"last_assistant_message\""))
+    #expect(command.contains("fold -w \(AgentPresenceOSC.mailChunkCharacters)"))
+    // The excerpt notify stays as the else branch for payloads without a message.
+    #expect(command.contains("kind=notify"))
+    #expect(ManagedHookCommandVariables.unexpected(in: command).isEmpty)
+  }
+
+  @Test func stopEmitsWholeMessageAsReassemblableChunks() async throws {
+    let message = (0..<60).map { "Line \($0): \"quoted\" \\ back-slash, tab\t and ünïcödé 🎉" }
+      .joined(separator: "\n")
+    let payload = ["hook_event_name": "Stop", "last_assistant_message": message]
+    let json = try #require(String(bytes: try JSONEncoder().encode(payload), encoding: .utf8))
+    let output = try await runHookCommandCapturingTTY(
+      AgentHookSettingsCommand.claudeStopCommand(agent: .claude),
+      env: ["KELPIE_SURFACE_ID": UUID().uuidString], stdin: json)
+
+    let payloads = output.matches(of: #/\u{1B}\]3008;(.*?)\u{1B}\\/#).map { String($0.1) }
+    var assembler = MailAssembler()
+    var completed: MailAssembler.Completed?
+    var mailChunks = 0
+    for payload in payloads {
+      guard let fields = AgentSignal.contextSignalFields(payload: payload),
+        AgentPresenceOSC.isMailMetadata(fields.metadata),
+        let chunk = AgentPresenceOSC.parseMailChunk(id: fields.id, metadata: fields.metadata)
+      else { continue }
+      mailChunks += 1
+      #expect(payload.utf8.count < 2_048)
+      if let result = assembler.accept(chunk) { completed = result }
+    }
+    #expect(mailChunks > 1)
+    #expect(completed == MailAssembler.Completed(agent: .claude, body: message))
+    #expect(!output.contains("kind=notify"))
+  }
+
+  @Test func stopWithoutMessageFallsBackToNotify() async throws {
+    let output = try await runHookCommandCapturingTTY(
+      AgentHookSettingsCommand.claudeStopCommand(agent: .claude),
+      env: ["KELPIE_SURFACE_ID": UUID().uuidString],
+      stdin: #"{"hook_event_name":"Stop","message":"short"}"#)
+    #expect(output.contains("kind=notify"))
+    #expect(!output.contains("kind=mail"))
   }
 
   /// Runs `command` with `/dev/tty` (the OSC sink) redirected to a capture file,

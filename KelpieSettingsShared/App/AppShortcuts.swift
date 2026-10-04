@@ -473,7 +473,7 @@ public enum AppShortcuts {
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
   public static let toggleFleetView = AppShortcut(id: .toggleFleetView, key: "f", modifiers: [.command, .shift])
   public static let togglePodsView = AppShortcut(id: .togglePodsView, key: "l", modifiers: [.command, .shift])
-  public static let toggleMailboxView = AppShortcut(id: .toggleMailboxView, key: "m", modifiers: [.command, .shift])
+  public static let toggleMailboxView = AppShortcut(id: .toggleMailboxView, key: "i", modifiers: [.command, .shift])
   public static let showStandardView = AppShortcut(id: .showStandardView, key: "h", modifiers: [.command, .shift])
   // `]` expands (opens rightward), `[` collapses, mirroring the outline-view
   // Right/Left arrow convention, and pairs with ⌘[ for the sidebar toggle.

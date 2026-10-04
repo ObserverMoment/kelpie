@@ -44,7 +44,8 @@ struct ViewSwitcherToolbarControl: View {
           .symbolVariant(showsMailbox ? .fill : .none)
       }
       .help(
-        "Mailbox: messages from your agent sessions, \(unreadMail) unread (\(Self.shortcut(AppShortcuts.toggleMailboxView, overrides)))"
+        "Mailbox: messages from your agent sessions, \(unreadMail) unread "
+          + "(\(Self.shortcut(AppShortcuts.toggleMailboxView, overrides)))"
       )
       .accessibilityIdentifier("mailboxViewToolbarButton")
       Button {

@@ -280,17 +280,15 @@ public nonisolated enum AgentPresenceOSC {
     "\(kindField)=\(notifyKind);\(titleField)=\(title);\(bodyField)=\(body)"
   }
 
-  /// Notify OSC whose `title` / `body` are base64-encoded when the command is
-  /// composed, so the hook needs no runtime `base64` / `awk`. Standard base64
-  /// carries no `;` or `%`, so it is framing- and `printf`-safe with no format args.
   // MARK: - Mail (the full assistant message, chunked).
+  //
+  // `kind=mail` carries the Stop payload's whole `last_assistant_message`, where
+  // `kind=notify` carries a 1000-byte flattened excerpt. The body is the base64 of
+  // the raw JSON string value, cut into `mailChunkCharacters` pieces so every
+  // sequence stays under libghostty's 2 KB OSC cap. `id` groups one message's
+  // chunks (the agent pid; `0` over SSH), `seq` is 1-based and `seq=1` starts a
+  // fresh message, `total` is the chunk count.
 
-  /// `kind=mail` carries the Stop payload's whole `last_assistant_message`, where
-  /// `kind=notify` carries a 1000-byte flattened excerpt. The body is the base64 of
-  /// the raw JSON string value, cut into `mailChunkCharacters` pieces so every
-  /// sequence stays under libghostty's 2 KB OSC cap. `id` groups one message's
-  /// chunks (the agent pid; `0` over SSH), `seq` is 1-based and `seq=1` starts a
-  /// fresh message, `total` is the chunk count.
   static let mailKind = "mail"
   static let mailIDField = "id"
   static let mailSequenceField = "seq"
@@ -357,6 +355,9 @@ public nonisolated enum AgentPresenceOSC {
       + #"else \#(fallback); fi"#
   }
 
+  /// Notify OSC whose `title` / `body` are base64-encoded when the command is
+  /// composed, so the hook needs no runtime `base64` / `awk`. Standard base64
+  /// carries no `;` or `%`, so it is framing- and `printf`-safe with no format args.
   static func emitFixedNotifyShell(agent: SkillAgent, title: String, body: String) -> String {
     let encodedTitle = Data(title.utf8).base64EncodedString()
     let encodedBody = Data(body.utf8).base64EncodedString()
