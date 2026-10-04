@@ -6,6 +6,7 @@ struct SidebarCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleFleetViewAction) private var toggleFleetViewAction
   @FocusedValue(\.togglePodsViewAction) private var togglePodsViewAction
+  @FocusedValue(\.toggleMailboxViewAction) private var toggleMailboxViewAction
   @FocusedValue(\.showStandardViewAction) private var showStandardViewAction
   @FocusedValue(\.revealInSidebarAction) private var revealInSidebarAction
   @FocusedValue(\.expandAllSidebarGroupsAction) private var expandAllSidebarGroupsAction
@@ -23,6 +24,7 @@ struct SidebarCommands: Commands {
     let toggleLeftSidebar = AppShortcuts.toggleLeftSidebar.effective(from: overrides)
     let toggleFleetView = AppShortcuts.toggleFleetView.effective(from: overrides)
     let togglePodsView = AppShortcuts.togglePodsView.effective(from: overrides)
+    let toggleMailboxView = AppShortcuts.toggleMailboxView.effective(from: overrides)
     let showStandardView = AppShortcuts.showStandardView.effective(from: overrides)
     let revealInSidebar = AppShortcuts.revealInSidebar.effective(from: overrides)
     let expandAll = AppShortcuts.expandAllSidebarGroups.effective(from: overrides)
@@ -49,6 +51,12 @@ struct SidebarCommands: Commands {
       .appKeyboardShortcut(togglePodsView)
       .help("Toggle Pods: your agent pods and their members (\(togglePodsView?.display ?? "none"))")
       .disabled(togglePodsViewAction?.isEnabled != true)
+      Button("Mailbox", systemImage: MailboxView.symbolName) {
+        toggleMailboxViewAction?()
+      }
+      .appKeyboardShortcut(toggleMailboxView)
+      .help("Toggle Mailbox: messages from your agent sessions (\(toggleMailboxView?.display ?? "none"))")
+      .disabled(toggleMailboxViewAction?.isEnabled != true)
       Button("Home", systemImage: ViewSwitcherToolbarControl.homeSymbolName) {
         showStandardViewAction?()
       }
@@ -125,6 +133,10 @@ private struct TogglePodsViewActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct ToggleMailboxViewActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct ShowStandardViewActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -159,6 +171,11 @@ extension FocusedValues {
   var togglePodsViewAction: FocusedAction<Void>? {
     get { self[TogglePodsViewActionKey.self] }
     set { self[TogglePodsViewActionKey.self] = newValue }
+  }
+
+  var toggleMailboxViewAction: FocusedAction<Void>? {
+    get { self[ToggleMailboxViewActionKey.self] }
+    set { self[ToggleMailboxViewActionKey.self] = newValue }
   }
 
   var showStandardViewAction: FocusedAction<Void>? {

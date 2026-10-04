@@ -1,3 +1,4 @@
+import KelpieSettingsShared
 import SwiftUI
 
 /// Live, observable chrome a content contributes to its tab in the strip: an
@@ -58,20 +59,34 @@ final class TerminalTabChrome: TabChrome {
   var isReadOnly = false
   var reportedTitle: String?
 
+  /// Unread messages in the pane's mailbox; `MailboxFeature` owns the count.
+  var unreadMail = 0
+
   var accessory: AnyView? {
-    guard !agents.isEmpty else { return nil }
-    return AnyView(TerminalAgentBadgeAccessory(agents: agents).equatable())
+    guard !agents.isEmpty || unreadMail > 0 else { return nil }
+    return AnyView(TerminalAgentBadgeAccessory(agents: agents, unreadMail: unreadMail).equatable())
   }
 }
 
-/// Equatable barrier under the type-erased accessory: the tab body re-runs on
-/// hover and interaction churn, and this keeps unchanged badges from
-/// rebuilding the avatar group each time.
 private struct TerminalAgentBadgeAccessory: View, Equatable {
   let agents: [AgentPresenceFeature.AgentInstance]
+  let unreadMail: Int
 
   var body: some View {
-    AgentAvatarGroupView(instances: agents, size: 14)
-      .padding(.trailing, 2)
+    HStack(spacing: 4) {
+      if unreadMail > 0 {
+        Text(unreadMail, format: .number)
+          .appFont(.caption2, weight: .semibold, monospaced: true)
+          .padding(.horizontal, 4)
+          .background(.tint, in: Capsule())
+          .foregroundStyle(.white)
+          .help("\(unreadMail) unread in this pane's mailbox")
+          .accessibilityLabel("\(unreadMail) unread messages")
+      }
+      if !agents.isEmpty {
+        AgentAvatarGroupView(instances: agents, size: 14)
+      }
+    }
+    .padding(.trailing, 2)
   }
 }

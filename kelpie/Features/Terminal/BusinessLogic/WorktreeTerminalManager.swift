@@ -392,7 +392,7 @@ final class WorktreeTerminalManager {
       selectTab(atIndex: index, in: worktree)
     case .selectRelativeTab(let worktree, let forward):
       selectRelativeTab(forward: forward, in: worktree)
-    case .focusSurface(let worktree, let tabID, let surfaceID, let input):
+    case .focusSurface(let worktree, let tabID, let surfaceID, let input, let submitsInput):
       let host = host(for: worktree)
       // Surface-first: the tab ID is a hint; the surface's actual owner wins.
       guard let owningTab = host.tabID(containing: surfaceID) ?? presentTab(tabID, in: worktree.id) else {
@@ -403,7 +403,7 @@ final class WorktreeTerminalManager {
       sendLayout(worktree.id, .selectTab(id: owningTab))
       host.liveSurface(surfaceID)?.requestFocus()
       if let input, !input.isEmpty {
-        host.focusAndInsertText(input + "\r")
+        host.focusAndInsertText(submitsInput ? input + "\r" : input)
       }
     case .splitSurface(
       let worktree, let tabID, let surfaceID, let direction, let input, let id, let focusing
@@ -749,6 +749,9 @@ final class WorktreeTerminalManager {
     // OSC-sourced presence events go through the existing idle-debounce funnel.
     host.onAgentHookEvent = { [weak self] event in
       self?.dispatchHookEvent(event)
+    }
+    host.onAgentMailReceived = { [weak self] surfaceID, agent, body in
+      self?.emit(.agentMailReceived(worktreeID: worktree.id, surfaceID: surfaceID, agent: agent, body: body))
     }
     host.onNotificationReceived = { [weak self] surfaceID, title, body, isViewed in
       self?.emit(

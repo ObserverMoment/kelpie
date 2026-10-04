@@ -103,7 +103,9 @@ struct TerminalClient {
     case selectTabAtIndex(Worktree, index: Int)
     /// Cycles to the next or previous tab in the focused pane, wrapping at the ends.
     case selectRelativeTab(Worktree, forward: Bool)
-    case focusSurface(Worktree, tabID: TabID, surfaceID: UUID, input: String? = nil)
+    /// `submitsInput: false` leaves `input` at the prompt without a Return (a
+    /// Mailbox reply quote).
+    case focusSurface(Worktree, tabID: TabID, surfaceID: UUID, input: String? = nil, submitsInput: Bool = true)
     case splitSurface(
       Worktree, tabID: TabID, surfaceID: UUID, direction: SplitDirection,
       input: String?, id: UUID? = nil, focusing: Bool = true)
@@ -157,6 +159,8 @@ struct TerminalClient {
     /// Forwarded from the terminal manager for hook events received over the socket.
     /// `AppFeature` translates this into `agentPresence(.hookEventReceived)`.
     case agentHookEventReceived(AgentHookEvent)
+    /// A whole assistant message from a `Stop` hook, reassembled from OSC chunks.
+    case agentMailReceived(worktreeID: Worktree.ID, surfaceID: UUID, agent: SkillAgent, body: String)
     /// Flips when the "any live surface anywhere" aggregate changes. Lets
     /// menu / focused-action gates read one Bool instead of iterating
     /// `sidebarItems` from a view body.

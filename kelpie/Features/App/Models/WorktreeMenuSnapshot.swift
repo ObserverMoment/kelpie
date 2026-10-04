@@ -118,7 +118,7 @@ extension AppFeature.Action {
         .taskStatusChanged, .blockingScriptCompleted, .commandPaletteToggleRequested,
         .setupScriptConsumed, .worktreeProjectionChanged, .surfaceCreated,
         .tabRemoved, .tabRenamed, .worktreeStateTornDown,
-        .surfacesClosed, .agentHookEventReceived, .terminalHasAnySurfaceChanged,
+        .surfacesClosed, .agentHookEventReceived, .agentMailReceived, .terminalHasAnySurfaceChanged,
         .surfaceCreationFailed, .initialTabCreationFailed:
         return false
       }
@@ -127,7 +127,7 @@ extension AppFeature.Action {
     // change that DOES affect a snapshot input flows back through a separate
     // `.terminalEvent.notificationIndicatorChanged` (counted above) or a
     // `.repositories` cache invalidation (the cacheInvalidations gate above).
-    case .agentPresence, .terminals, .commandPalette, .updates, .pods:
+    case .agentPresence, .terminals, .commandPalette, .updates, .pods, .mailbox:
       return false
     // Presenting or closing the overlay flips whether ⌃⌘←/→ have a grid to move
     // in; hiding the sidebar drops a focused group header.

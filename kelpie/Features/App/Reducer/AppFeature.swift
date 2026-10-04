@@ -94,6 +94,7 @@ struct AppFeature {
     var commandPalette = CommandPaletteFeature.State()
     var fleetView = FleetViewFeature.State()
     var pods = PodsFeature.State()
+    var mailbox = MailboxFeature.State()
     /// Terminal-orchestration state. Owns the per-tab feature collection so
     /// tab-bar views scope through `\.terminals` (narrow) instead of the full
     /// app store. Mirrors sidebar's `RepositoriesFeature` ownership pattern.
@@ -297,6 +298,7 @@ struct AppFeature {
     case commandPalette(CommandPaletteFeature.Action)
     case fleetView(FleetViewFeature.Action)
     case pods(PodsFeature.Action)
+    case mailbox(MailboxFeature.Action)
     /// ⌃⌘ + arrow: moves the keyboard cursor in whichever view is showing.
     case navigate(FleetViewNavigation.Direction)
     /// The sidebar column was shown or hidden; `ContentView` owns the visibility.
@@ -1740,7 +1742,7 @@ struct AppFeature {
           .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
         )
 
-      case .fleetView(.toggle), .fleetView(.togglePods):
+      case .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleMailbox):
         // Seed the launcher with the selected worktree before the child opens
         // (the child reducer runs after this arm).
         if !state.fleetView.isPresented {
@@ -1775,6 +1777,25 @@ struct AppFeature {
         return .send(.fleetView(.modeChanged(.pods)))
 
       case .pods:
+        return .none
+
+      case .mailbox(.delegate(.reply(let worktreeID, let surfaceID, let text))):
+        guard let worktree = state.repositories.worktree(for: worktreeID),
+          let tabID = state.terminals.layouts[id: worktreeID]?.layout
+            .tab(containingContent: ContentID(rawValue: surfaceID))?.tab.id
+        else { return .none }
+        // Straight to the pane, like opening a Fleet card: the overlay closes
+        // and the quote lands at the prompt without a Return.
+        state.fleetView.isPresented = false
+        return .merge(
+          .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
+          .run { _ in
+            await terminalClient.send(
+              .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: text, submitsInput: false))
+          }
+        )
+
+      case .mailbox:
         return .none
 
       case .commandPalette(.delegate(.dismissedWithoutSelection)):
@@ -2160,10 +2181,19 @@ struct AppFeature {
           ids.count == 1
           ? .send(.agentPresence(.surfaceClosed(ids.first!)))
           : .send(.agentPresence(.surfacesClosed(ids)))
-        return .merge(presenceEffect, ackEffect)
+        return .merge(presenceEffect, ackEffect, .send(.mailbox(.surfacesClosed(ids))))
 
       case .terminalEvent(.agentHookEventReceived(let event)):
-        return .send(.agentPresence(.hookEventReceived(event)))
+        let mailEffect: Effect<Action> =
+          switch event.eventName {
+          case .promptSubmitted: .send(.mailbox(.promptSubmitted(surfaceID: event.surfaceID)))
+          case .sessionEnd: .send(.mailbox(.sessionEnded(surfaceID: event.surfaceID)))
+          default: .none
+          }
+        return .merge(.send(.agentPresence(.hookEventReceived(event))), mailEffect)
+
+      case .terminalEvent(.agentMailReceived(let worktreeID, let surfaceID, let agent, let body)):
+        return .send(.mailbox(.received(surfaceID: surfaceID, worktreeID: worktreeID, agent: agent, body: body)))
 
       // The user is looking at this surface, so whatever was parked on them there
       // is acknowledged. Scoped to the focused surface, so a broken session in
@@ -2200,6 +2230,9 @@ struct AppFeature {
     Scope(state: \.pods, action: \.pods) {
       PodsFeature()
     }
+    Scope(state: \.mailbox, action: \.mailbox) {
+      MailboxFeature()
+    }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
     }
@@ -2233,12 +2266,39 @@ struct AppFeature {
             repositories: state.repositories.repositories,
             presence: state.agentPresence,
             layouts: state.terminals.layouts,
-            podNameBySurface: PodStructure.podNames(state.pods.pods)
+            podNameBySurface: PodStructure.podNames(state.pods.pods),
+            lastMailBySurface: state.mailbox.file.latestBodyBySurface
           )
         )
       )
       state.pods.applyStructure(
         PodStructure.compute(pods: state.pods.pods, cards: state.fleetView.structure.allCards))
+      state.mailbox.applyStructure(
+        MailboxStructure.compute(
+          .init(
+            boxes: state.mailbox.file.boxes,
+            sidebarItems: state.repositories.sidebarItems,
+            repositories: state.repositories.repositories,
+            presence: state.agentPresence,
+            layouts: state.terminals.layouts
+          )
+        )
+      )
+      return .none
+    }
+    Reduce { state, action in
+      // Unread-mail badges live on each pane's chrome (content-side state, per
+      // CLAUDE.md), so write them whenever a mailbox action lands and once for
+      // panes rehydrated after launch.
+      switch action {
+      case .mailbox: break
+      case .terminals(.layoutsHydrated): break
+      default: return .none
+      }
+      let boxes = state.mailbox.file.boxes
+      let current = Set(boxes.ids)
+      writeMailChrome(for: current.union(state.mailbox.badgedSurfaceIDs), boxes: boxes)
+      state.mailbox.badgedSurfaceIDs = current
       return .none
     }
     Reduce { state, action in
@@ -2428,6 +2488,16 @@ struct AppFeature {
       let snapshot = presence.rowSnapshot(across: [surfaceID], badgesEnabled: badgesEnabled)
       chrome.agents = snapshot.agents
       chrome.isWorking = snapshot.isWorking
+    }
+  }
+
+  private func writeMailChrome(for surfaceIDs: some Sequence<UUID>, boxes: IdentifiedArrayOf<Mailbox>) {
+    for surfaceID in surfaceIDs {
+      guard
+        let chrome = contentRuntime.content(for: ContentID(rawValue: surfaceID))?.chrome
+          as? TerminalTabChrome
+      else { continue }
+      chrome.unreadMail = boxes[id: surfaceID]?.unreadCount ?? 0
     }
   }
 

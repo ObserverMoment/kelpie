@@ -3,7 +3,7 @@ import KelpieSettingsShared
 import Sharing
 import SwiftUI
 
-/// Window-toolbar switch between the three full-window views: Fleet, Pods, and
+/// Window-toolbar switch between the full-window views: Fleet, Pods, Mailbox and
 /// Home (the sidebar and terminals). The showing view's glyph is filled.
 struct ViewSwitcherToolbarControl: View {
   let store: StoreOf<AppFeature>
@@ -15,7 +15,9 @@ struct ViewSwitcherToolbarControl: View {
     let overrides = settingsFile.global.shortcutOverrides
     let fleet = store.fleetView
     let showsFleet = fleet.isPresented && fleet.mode == .fleet
-    let showsPods = fleet.isPresented && fleet.mode != .fleet
+    let showsPods = fleet.isPresented && fleet.mode != .fleet && fleet.mode != .mailbox
+    let showsMailbox = fleet.isPresented && fleet.mode == .mailbox
+    let unreadMail = store.mailbox.unreadCount
     ControlGroup {
       Button {
         store.send(.fleetView(.toggle))
@@ -35,6 +37,16 @@ struct ViewSwitcherToolbarControl: View {
       }
       .help("Pods: your agent pods and their members (\(Self.shortcut(AppShortcuts.togglePodsView, overrides)))")
       .accessibilityIdentifier("podsViewToolbarButton")
+      Button {
+        store.send(.fleetView(.toggleMailbox))
+      } label: {
+        Label("Mailbox", systemImage: unreadMail > 0 ? "envelope.badge" : MailboxView.symbolName)
+          .symbolVariant(showsMailbox ? .fill : .none)
+      }
+      .help(
+        "Mailbox: messages from your agent sessions, \(unreadMail) unread (\(Self.shortcut(AppShortcuts.toggleMailboxView, overrides)))"
+      )
+      .accessibilityIdentifier("mailboxViewToolbarButton")
       Button {
         store.send(.fleetView(.dismiss))
       } label: {

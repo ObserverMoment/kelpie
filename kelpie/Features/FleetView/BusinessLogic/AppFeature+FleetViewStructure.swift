@@ -13,7 +13,8 @@ extension AppFeature.Action {
     case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember):
       return false
     // Pods add the pod-name caption and feed Pods mode, which the same pass computes.
-    case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .pods:
+    case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleMailbox), .pods,
+      .mailbox:
       return true
     case .fleetView, .settings, .updates, .commandPalette, .terminalEvent:
       return false

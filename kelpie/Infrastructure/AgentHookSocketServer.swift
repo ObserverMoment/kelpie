@@ -487,6 +487,8 @@ nonisolated struct AgentHookEvent: Equatable, Sendable, Decodable {
     case error
     /// Context compaction started.
     case compacting
+    /// The user submitted a prompt; carries no activity (`busy` travels with it).
+    case promptSubmitted = "prompt_submitted"
   }
 
   let version: Int

@@ -14,6 +14,10 @@ nonisolated enum HookEvent: String, CaseIterable {
   case error
   /// Context compaction started (Claude `PreCompact`).
   case compacting
+  /// The user submitted a prompt (Claude `UserPromptSubmit`). Carries no
+  /// activity of its own (`busy` travels with it); the Mailbox uses it to mark
+  /// a staged reply as sent.
+  case promptSubmitted = "prompt_submitted"
 }
 
 nonisolated enum AgentHookSettingsCommand {
@@ -96,7 +100,8 @@ nonisolated enum AgentHookSettingsCommand {
         agent: agent, title: Self.errorNotifyTitle, body: Self.errorNotifyBody)
     let idleBranch =
       "\(AgentPresenceOSC.emitShell(event: .idle, agent: agent, metadataSuffixVariable: sessionMetadataVariable)); "
-      + AgentPresenceOSC.emitNotifyShell(agent: agent, readsStdin: false)
+      + AgentPresenceOSC.emitMailShell(
+        agent: agent, fallback: AgentPresenceOSC.emitNotifyShell(agent: agent, readsStdin: false))
     let steps: [String] = [
       AgentPresenceOSC.ttyResolveSnippet,
       AgentPresenceOSC.stopTranscriptProbeShell(),

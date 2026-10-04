@@ -12,6 +12,8 @@ struct FleetViewFeature {
   enum Mode: Hashable, Sendable {
     case fleet
     case pods
+    /// Per-session inboxes of agent messages.
+    case mailbox
     /// One pod's members side by side, full window.
     case podWorkspace(PodID)
   }
@@ -72,6 +74,8 @@ struct FleetViewFeature {
     case toggle
     /// Shows Pods mode, or closes the overlay when Pods mode is showing.
     case togglePods
+    /// Shows Mailbox mode, or closes the overlay when Mailbox mode is showing.
+    case toggleMailbox
     case modeChanged(Mode)
     case dismiss
     case columnCountChanged(Int)
@@ -101,6 +105,9 @@ struct FleetViewFeature {
 
       case .togglePods:
         return Self.toggle(.pods, state: &state)
+
+      case .toggleMailbox:
+        return Self.toggle(.mailbox, state: &state)
 
       case .modeChanged(let mode):
         state.mode = mode

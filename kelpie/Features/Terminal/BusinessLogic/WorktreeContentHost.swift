@@ -46,6 +46,9 @@ final class WorktreeContentHost {
   @ObservationIgnored var onSurfacesHibernated: ((Set<UUID>) -> Void)?
   @ObservationIgnored var onDormancyChanged: (() -> Void)?
   @ObservationIgnored var onAgentHookEvent: ((AgentHookEvent) -> Void)?
+  /// A whole assistant message (`kind=mail`), reassembled from its OSC chunks.
+  @ObservationIgnored var onAgentMailReceived: ((UUID, SkillAgent, String) -> Void)?
+  @ObservationIgnored private var mailAssemblers: [UUID: MailAssembler] = [:]
 
   var socketPath: String?
   var notificationsEnabled = true
@@ -450,6 +453,8 @@ final class WorktreeContentHost {
   func handleContextSignal(surfaceID: UUID, id: String, metadata: String) {
     if AgentPresenceOSC.isNotifyMetadata(metadata) {
       handleNotifySignal(surfaceID: surfaceID, id: id, metadata: metadata)
+    } else if AgentPresenceOSC.isMailMetadata(metadata) {
+      handleMailSignal(surfaceID: surfaceID, id: id, metadata: metadata)
     } else {
       handlePresenceSignal(surfaceID: surfaceID, id: id, metadata: metadata)
     }
@@ -469,6 +474,29 @@ final class WorktreeContentHost {
     case .failure(.parseFailed):
       Self.logger.warning("Dropped malformed presence signal (\(metadata.utf8.count) metadata bytes)")
     }
+  }
+
+  /// Mail replaces the Stop notify, so the banner / sound path still fires
+  /// (with an excerpt) while the full text goes to the mailbox, not the
+  /// notification store.
+  private func handleMailSignal(surfaceID: UUID, id: String, metadata: String) {
+    guard isKnownSurface(surfaceID) else {
+      Self.logger.debug("Dropped mail chunk for unknown surface \(surfaceID)")
+      return
+    }
+    guard let chunk = AgentPresenceOSC.parseMailChunk(id: id, metadata: metadata) else {
+      Self.logger.warning("Dropped malformed mail chunk (\(metadata.utf8.count) metadata bytes)")
+      return
+    }
+    guard let completed = mailAssemblers[surfaceID, default: MailAssembler()].accept(chunk) else { return }
+    onAgentMailReceived?(surfaceID, completed.agent, completed.body)
+    @Shared(.settingsFile) var settingsFile: SettingsFile
+    guard settingsFile.global.richAgentNotificationsEnabled else { return }
+    lastCustomNotificationAt[surfaceID] = clock.now
+    pendingAgentOSCNotifications.removeValue(forKey: surfaceID)?.cancel()
+    onNotificationReceived?(
+      surfaceID, completed.agent.displayName,
+      AgentSignal.sanitizeNotificationText(completed.body, max: 300), isViewedSurface(surfaceID))
   }
 
   private func handleNotifySignal(surfaceID: UUID, id: String, metadata: String) {

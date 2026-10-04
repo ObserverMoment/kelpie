@@ -60,6 +60,7 @@ struct ContentView: View {
         FleetView(
           store: store.scope(state: \.fleetView, action: \.fleetView),
           podsStore: store.scope(state: \.pods, action: \.pods),
+          mailboxStore: store.scope(state: \.mailbox, action: \.mailbox),
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           runtime: ContentRuntime.liveValue
         )
@@ -75,6 +76,9 @@ struct ContentView: View {
     }
     .focusedSceneAction(\.togglePodsViewAction, enabled: true) {
       store.send(.fleetView(.togglePods))
+    }
+    .focusedSceneAction(\.toggleMailboxViewAction, enabled: true) {
+      store.send(.fleetView(.toggleMailbox))
     }
     .focusedSceneAction(\.showStandardViewAction, enabled: store.fleetView.isPresented) {
       store.send(.fleetView(.dismiss))

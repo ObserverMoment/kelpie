@@ -89,6 +89,8 @@ struct FleetViewStructure: Equatable, Sendable {
     let presence: AgentPresenceFeature.State
     let layouts: IdentifiedArrayOf<LayoutFeature.State>
     var podNameBySurface: [UUID: String] = [:]
+    /// Latest mailbox message per surface; wins over the notification excerpt.
+    var lastMailBySurface: [UUID: String] = [:]
   }
 
   static func compute(_ inputs: Inputs) -> FleetViewStructure {
@@ -100,7 +102,7 @@ struct FleetViewStructure: Equatable, Sendable {
       sidebarItems: sidebarItems)
     let builder = CardBuilder(
       sidebarItems: sidebarItems, repositories: repositories, presence: inputs.presence, layouts: inputs.layouts,
-      podNameBySurface: inputs.podNameBySurface)
+      podNameBySurface: inputs.podNameBySurface, lastMailBySurface: inputs.lastMailBySurface)
     let groupSections = placement.groups.compactMap { group -> Section? in
       let cards = group.repositories.flatMap { builder.cards(forRows: $0.rowIDs) }
       return cards.isEmpty ? nil : Section(id: .group(group.id), title: group.name, cards: cards)
@@ -206,18 +208,21 @@ private struct CardBuilder {
   let layouts: IdentifiedArrayOf<LayoutFeature.State>
   let recordsBySurface: [UUID: [(agent: SkillAgent, record: AgentPresenceFeature.PresenceRecord)]]
   let podNameBySurface: [UUID: String]
+  let lastMailBySurface: [UUID: String]
 
   init(
     sidebarItems: IdentifiedArrayOf<SidebarItemFeature.State>,
     repositories: IdentifiedArrayOf<Repository>,
     presence: AgentPresenceFeature.State,
     layouts: IdentifiedArrayOf<LayoutFeature.State>,
-    podNameBySurface: [UUID: String]
+    podNameBySurface: [UUID: String],
+    lastMailBySurface: [UUID: String] = [:]
   ) {
     self.sidebarItems = sidebarItems
     self.repositories = repositories
     self.layouts = layouts
     self.podNameBySurface = podNameBySurface
+    self.lastMailBySurface = lastMailBySurface
     recordsBySurface = presence.records.reduce(into: [:]) { grouped, entry in
       grouped[entry.key.surfaceID, default: []].append((entry.key.agent, entry.value))
     }
@@ -234,7 +239,9 @@ private struct CardBuilder {
       guard let records = recordsBySurface[surfaceID],
         let tab = layout?.tab(containingContent: ContentID(rawValue: surfaceID))?.tab
       else { return [] }
-      let lastMessage = row.notifications
+      let lastMessage =
+        lastMailBySurface[surfaceID]
+        ?? row.notifications
         .filter { $0.surfaceID == surfaceID && !$0.body.isEmpty }
         .max { $0.createdAt < $1.createdAt }?
         .body

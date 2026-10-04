@@ -9,6 +9,7 @@ import SwiftUI
 struct FleetView: View {
   @Bindable var store: StoreOf<FleetViewFeature>
   let podsStore: StoreOf<PodsFeature>
+  let mailboxStore: StoreOf<MailboxFeature>
   let terminalsStore: StoreOf<TerminalsFeature>
   let runtime: ContentRuntime
 
@@ -33,6 +34,23 @@ struct FleetView: View {
     VStack(alignment: .leading, spacing: 0) {
       header
       Divider()
+      if store.mode == .mailbox {
+        MailboxView(store: mailboxStore, runtime: runtime)
+      } else {
+        overviewBody
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .background(.windowBackground)
+    .onGeometryChange(for: Int.self) { proxy in
+      FleetViewNavigation.columnCount(forWidth: proxy.size.width - Self.horizontalPadding * 2)
+    } action: { columnCount in
+      store.send(.columnCountChanged(columnCount))
+    }
+    .accessibilityIdentifier("fleetView")
+  }
+
+  private var overviewBody: some View {
       Group {
         if store.mode == .pods {
           PodsView(store: podsStore)
@@ -49,15 +67,6 @@ struct FleetView: View {
       }
       .padding(.horizontal, Self.horizontalPadding)
       .padding(.top, 24)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    .background(.windowBackground)
-    .onGeometryChange(for: Int.self) { proxy in
-      FleetViewNavigation.columnCount(forWidth: proxy.size.width - Self.horizontalPadding * 2)
-    } action: { columnCount in
-      store.send(.columnCountChanged(columnCount))
-    }
-    .accessibilityIdentifier("fleetView")
   }
 
   /// Title row above the launcher row, both left-aligned on a band that reads
@@ -66,9 +75,9 @@ struct FleetView: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: 16) {
       Label {
-        Text(store.mode == .pods ? "Pods" : "Fleet View")
+        Text(headerTitle)
       } icon: {
-        Image(systemName: store.mode == .pods ? PodsView.symbolName : Self.symbolName)
+        Image(systemName: headerSymbolName)
           .foregroundStyle(.secondary)
           .accessibilityHidden(true)
       }
@@ -77,6 +86,10 @@ struct FleetView: View {
         if store.mode == .pods {
           Button("New Pod", systemImage: "plus") { podsStore.send(.newPodTapped) }
             .help("Create a pod from running Claude Code sessions")
+        } else if store.mode == .mailbox {
+          Text(mailboxSummary)
+            .appFont(.callout)
+            .foregroundStyle(.secondary)
         } else {
           FleetLauncherView(store: store)
         }
@@ -87,6 +100,27 @@ struct FleetView: View {
     .padding(.vertical, 20)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color(nsColor: .controlBackgroundColor))
+  }
+
+  private var headerTitle: String {
+    switch store.mode {
+    case .pods, .podWorkspace: "Pods"
+    case .mailbox: "Mailbox"
+    case .fleet: "Fleet View"
+    }
+  }
+
+  private var headerSymbolName: String {
+    switch store.mode {
+    case .pods, .podWorkspace: PodsView.symbolName
+    case .mailbox: MailboxView.symbolName
+    case .fleet: Self.symbolName
+    }
+  }
+
+  private var mailboxSummary: String {
+    let unread = mailboxStore.unreadCount
+    return unread == 0 ? "No unread messages" : "^[\(unread) unread message](inflect: true)"
   }
 
   private var sessions: some View {

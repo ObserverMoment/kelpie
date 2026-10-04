@@ -37,5 +37,6 @@ let package = Package(
     .package(url: "https://github.com/pointfreeco/swift-perception", exact: "2.0.9"),
     .package(url: "https://github.com/pointfreeco/swift-sharing", exact: "2.7.4"),
     .package(url: "https://github.com/pointfreeco/xctest-dynamic-overlay", exact: "1.8.1"),
+    .package(url: "https://github.com/gonzalezreal/Textual", exact: "0.5.0"),
   ]
 )

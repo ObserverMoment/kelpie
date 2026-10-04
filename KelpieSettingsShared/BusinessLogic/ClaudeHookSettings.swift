@@ -31,6 +31,8 @@ private nonisolated struct ClaudeHooksPayload: Encodable {
 
   private static let busy = AgentHookSettingsCommand.compositeCommand(
     events: [.busy], forwardStdinAsNotification: false, agent: .claude)
+  private static let promptSubmitted = AgentHookSettingsCommand.compositeCommand(
+    events: [.busy, .promptSubmitted], forwardStdinAsNotification: false, agent: .claude)
   private static let idle = AgentHookSettingsCommand.compositeCommand(
     events: [.idle], forwardStdinAsNotification: false, agent: .claude)
   private static let awaitingInputAndNotify = AgentHookSettingsCommand.compositeCommand(
@@ -51,7 +53,7 @@ private nonisolated struct ClaudeHooksPayload: Encodable {
       .init(hooks: [.init(command: Self.sessionStart, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "UserPromptSubmit": [
-      .init(hooks: [.init(command: Self.busy, timeout: AgentHookSettingsCommand.timeoutSeconds)])
+      .init(hooks: [.init(command: Self.promptSubmitted, timeout: AgentHookSettingsCommand.timeoutSeconds)])
     ],
     "PreToolUse": [
       .init(matcher: "", hooks: [.init(command: Self.busy, timeout: AgentHookSettingsCommand.timeoutSeconds)]),

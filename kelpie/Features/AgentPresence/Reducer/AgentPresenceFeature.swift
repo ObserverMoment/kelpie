@@ -260,7 +260,7 @@ struct AgentPresenceFeature {
       return applyActivity(.error, event: event, key: key, into: &state) ? [event.surfaceID] : []
     case .compacting:
       return applyActivity(.compacting, event: event, key: key, into: &state) ? [event.surfaceID] : []
-    case .notification, .none:
+    case .notification, .promptSubmitted, .none:
       return []
     }
   }

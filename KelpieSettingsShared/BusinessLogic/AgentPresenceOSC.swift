@@ -283,6 +283,80 @@ public nonisolated enum AgentPresenceOSC {
   /// Notify OSC whose `title` / `body` are base64-encoded when the command is
   /// composed, so the hook needs no runtime `base64` / `awk`. Standard base64
   /// carries no `;` or `%`, so it is framing- and `printf`-safe with no format args.
+  // MARK: - Mail (the full assistant message, chunked).
+
+  /// `kind=mail` carries the Stop payload's whole `last_assistant_message`, where
+  /// `kind=notify` carries a 1000-byte flattened excerpt. The body is the base64 of
+  /// the raw JSON string value, cut into `mailChunkCharacters` pieces so every
+  /// sequence stays under libghostty's 2 KB OSC cap. `id` groups one message's
+  /// chunks (the agent pid; `0` over SSH), `seq` is 1-based and `seq=1` starts a
+  /// fresh message, `total` is the chunk count.
+  static let mailKind = "mail"
+  static let mailIDField = "id"
+  static let mailSequenceField = "seq"
+  static let mailTotalField = "total"
+  public static let mailBodyKey = "last_assistant_message"
+  /// Byte cap on the extracted (still JSON-escaped) message. Far above any
+  /// realistic turn; keeps a runaway payload from stalling the hook.
+  static let mailBodyByteBudget = 65_536
+  public static let mailChunkCharacters = 1_200
+
+  public struct MailChunk: Equatable, Sendable {
+    public let agent: String
+    public let messageID: String
+    public let index: Int
+    public let total: Int
+    /// Raw base64 slice; join all slices in `index` order, then `decodeMailBody`.
+    public let body: String
+  }
+
+  public static func isMailMetadata(_ metadata: String) -> Bool {
+    parseFields(metadata)?[Substring(kindField)] == Substring(mailKind)
+  }
+
+  public static func parseMailChunk(id: String, metadata: String) -> MailChunk? {
+    guard !id.isEmpty, let fields = parseFields(metadata),
+      fields[Substring(kindField)] == Substring(mailKind),
+      let messageID = fields[Substring(mailIDField)], !messageID.isEmpty,
+      let index = fields[Substring(mailSequenceField)].flatMap({ Int($0) }),
+      let total = fields[Substring(mailTotalField)].flatMap({ Int($0) }),
+      index >= 1, total >= index,
+      let body = fields[Substring(bodyField)], !body.isEmpty
+    else { return nil }
+    return MailChunk(agent: id, messageID: String(messageID), index: index, total: total, body: String(body))
+  }
+
+  /// Decodes the joined chunks back into the message text. The awk budget may
+  /// cut the JSON string mid-escape or mid-UTF-8 sequence, so a failed decode
+  /// retries with trailing bytes trimmed before giving up.
+  public static func decodeMailBody(_ base64: String) -> String? {
+    guard var raw = Data(base64Encoded: base64) else { return nil }
+    let quote = Data([0x22])
+    let decoder = JSONDecoder()
+    for _ in 0..<8 {
+      if let text = try? decoder.decode(String.self, from: quote + raw + quote), !text.isEmpty { return text }
+      guard !raw.isEmpty else { return nil }
+      raw.removeLast()
+    }
+    return nil
+  }
+
+  /// Extracts `last_assistant_message` from the already-read hook JSON (`$__in`)
+  /// and emits it as mail chunks; runs `fallback` (the excerpt notify) when the
+  /// payload has no message. Portable sh + awk + base64 + fold, like the notify.
+  static func emitMailShell(agent: SkillAgent, fallback: String) -> String {
+    let payload =
+      #"\033]3008;start=\#(agent.rawValue);\#(kindField)=\#(mailKind);\#(mailIDField)=%s;"#
+      + #"\#(mailSequenceField)=%s;\#(mailTotalField)=%s;\#(bodyField)=%s\033\\"#
+    return #"__mb=$(printf '%s' "$__in" | LC_ALL=C awk -v keys="\#(mailBodyKey)" "#
+      + #"-v budget=\#(mailBodyByteBudget) '\#(notifyExtractAwk)' | base64 | tr -d '\n'); "#
+      + #"if [ -n "$__mb" ]; then __mid=${__ppid:-0}; "#
+      + #"__mt=$(printf '%s\n' "$__mb" | fold -w \#(mailChunkCharacters) | wc -l | tr -d ' '); __mi=0; "#
+      + #"printf '%s\n' "$__mb" | fold -w \#(mailChunkCharacters) | while IFS= read -r __mc; do "#
+      + #"__mi=$((__mi+1)); printf '\#(payload)' "$__mid" "$__mi" "$__mt" "$__mc" > "$__tty"; done; "#
+      + #"else \#(fallback); fi"#
+  }
+
   static func emitFixedNotifyShell(agent: SkillAgent, title: String, body: String) -> String {
     let encodedTitle = Data(title.utf8).base64EncodedString()
     let encodedBody = Data(body.utf8).base64EncodedString()

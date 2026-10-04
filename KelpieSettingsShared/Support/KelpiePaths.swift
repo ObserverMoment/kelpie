@@ -220,6 +220,10 @@ public nonisolated enum KelpiePaths {
   }
 
   /// Legacy `~/.kelpie/layouts.json`, read once by the relocation migrator.
+  public static var mailboxesURL: URL {
+    baseDirectory.appending(path: "mailboxes.json", directoryHint: .notDirectory)
+  }
+
   public static var legacyLayoutsURL: URL {
     baseDirectory.appending(path: "layouts.json", directoryHint: .notDirectory)
   }
