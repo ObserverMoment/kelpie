@@ -4,6 +4,8 @@ import SwiftUI
 /// One pod: its name and description, actions, and a subcard per member.
 struct PodCardView: View {
   let pod: PodStructure.PodCard
+  let columnCount: Int
+  let focusedMemberID: UUID?
   let onOpen: () -> Void
   let onAddMembers: () -> Void
   let onDisband: () -> Void
@@ -11,17 +13,37 @@ struct PodCardView: View {
   @State private var isConfirmingDisband = false
 
   private static let cornerRadius: CGFloat = 12
+  private static let padding: CGFloat = 16
+  private static let memberMinimumWidth: CGFloat = 220
+  private static let memberSpacing: CGFloat = 12
+
+  /// Member tiles per row in a pod list `width` wide.
+  static func columnCount(forListWidth width: CGFloat) -> Int {
+    FleetViewNavigation.columnCount(
+      forWidth: width - padding * 2,
+      minimumWidth: memberMinimumWidth,
+      spacing: memberSpacing,
+      maximum: .max)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       header
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12, alignment: .top)], spacing: 12) {
-        ForEach(pod.members) { member in
-          PodMemberCardView(member: member)
+      // Rows of `columnCount`, every cell the same width, so the arrow keys
+      // move through exactly the rows drawn.
+      ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+        HStack(alignment: .top, spacing: Self.memberSpacing) {
+          ForEach(row) { member in
+            PodMemberCardView(member: member, isFocused: member.id == focusedMemberID)
+              .id(member.id)
+          }
+          ForEach(0..<max(0, columnCount - row.count), id: \.self) { _ in
+            Color.clear.frame(maxWidth: .infinity)
+          }
         }
       }
     }
-    .padding(16)
+    .padding(Self.padding)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
     .overlay {
@@ -34,6 +56,10 @@ struct PodCardView: View {
       Text("Each member is told the pod is gone and to stop messaging its podmates.")
     }
     .accessibilityIdentifier("podCard-\(pod.id.rawValue.uuidString)")
+  }
+
+  private var rows: [[PodStructure.MemberCard]] {
+    FleetViewNavigation.rows(pod.members, columnCount: columnCount)
   }
 
   private var header: some View {
@@ -64,6 +90,9 @@ struct PodCardView: View {
 /// has registered its messaging name.
 private struct PodMemberCardView: View {
   let member: PodStructure.MemberCard
+  let isFocused: Bool
+
+  private static let cornerRadius: CGFloat = 8
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -96,7 +125,13 @@ private struct PodMemberCardView: View {
     }
     .padding(10)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+    .overlay {
+      if isFocused {
+        RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(Color.accentColor, lineWidth: 2)
+      }
+    }
+    .accessibilityAddTraits(isFocused ? .isSelected : [])
   }
 
   @ViewBuilder

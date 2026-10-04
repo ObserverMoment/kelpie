@@ -147,9 +147,6 @@ private struct FleetSectionView: View {
   }
 
   private var rows: [[FleetViewStructure.Card]] {
-    let columns = max(1, columnCount)
-    return stride(from: 0, to: section.cards.count, by: columns).map {
-      Array(section.cards[$0..<min($0 + columns, section.cards.count)])
-    }
+    FleetViewNavigation.rows(section.cards, columnCount: columnCount)
   }
 }

@@ -152,6 +152,12 @@ struct ContentView: View {
     ) { renameStore in
       RenameBranchView(store: renameStore)
     }
+    // ⌃⌘↑/↓ skip the sidebar's group headers while the column is hidden.
+    // `initial: true` because a reopened window starts visible again while the
+    // store still holds what the closed window last reported.
+    .onChange(of: leftSidebarVisibility, initial: true) { _, visibility in
+      store.send(.sidebarVisibilityChanged(visibility != .detailOnly))
+    }
     .focusedSceneAction(\.toggleLeftSidebarAction, enabled: !store.fleetView.isPresented) {
       withAnimation(.easeOut(duration: 0.2)) {
         leftSidebarVisibility = leftSidebarVisibility == .detailOnly ? .all : .detailOnly

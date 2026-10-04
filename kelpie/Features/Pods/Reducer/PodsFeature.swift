@@ -35,6 +35,10 @@ struct PodsFeature {
     /// else goes to them until they do, so prompts never land back to back.
     var awaitingTurn: Set<UUID> = []
     var structure: PodStructure = .empty
+    /// The member tile the arrow keys are on; nil until the first arrow press.
+    var focusedMemberID: UUID?
+    /// Member tiles per row, reported by the view so arrows match what is drawn.
+    var columnCount = 1
     @Presents var editor: PodEditorFeature.State?
 
     var memberSurfaceIDs: Set<UUID> { Set(pods.flatMap(\.members.ids)) }
@@ -47,11 +51,18 @@ struct PodsFeature {
       pods.first { $0.members[id: surfaceID] != nil }?.id
     }
 
-    /// Stores a freshly computed structure when it changed. Called from the
+    /// Member tile ids in drawn order, one array per pod.
+    var memberIDsByPod: [[UUID]] { structure.pods.map { $0.members.map(\.id) } }
+
+    /// Stores a freshly computed structure when it changed and keeps the focus on
+    /// a surviving member tile (or its nearest neighbour). Called from the
     /// parent's post-reduce step.
     mutating func applyStructure(_ next: PodStructure) {
       guard next != structure else { return }
+      let previous = memberIDsByPod.flatMap { $0 }
       structure = next
+      focusedMemberID = FleetViewNavigation.reconcile(
+        focused: focusedMemberID, previous: previous, current: memberIDsByPod.flatMap { $0 })
     }
   }
 
@@ -60,6 +71,10 @@ struct PodsFeature {
     case addMembersTapped(PodID)
     case openTapped(PodID)
     case disbandTapped(PodID)
+    case columnCountChanged(Int)
+    case moveFocus(FleetViewNavigation.Direction)
+    /// Return on the focused member: opens its pod's workspace.
+    case activateFocusedMember
     case editor(PresentationAction<PodEditorFeature.Action>)
     /// A member reported its session name through `kelpie pod register`.
     case registered(surfaceID: UUID, sessionName: String)
@@ -105,6 +120,21 @@ struct PodsFeature {
 
       case .disbandTapped(let podID):
         return disband(podID, &state)
+
+      case .columnCountChanged(let count):
+        state.columnCount = max(1, count)
+        return .none
+
+      case .moveFocus(let direction):
+        // Each pod is a section, so Down from a pod's last row enters the next pod.
+        state.focusedMemberID = FleetViewNavigation.move(
+          from: state.focusedMemberID, direction,
+          sections: state.memberIDsByPod, columnCount: state.columnCount)
+        return .none
+
+      case .activateFocusedMember:
+        guard let podID = state.focusedMemberID.flatMap(state.podID(containing:)) else { return .none }
+        return .send(.delegate(.openWorkspace(podID)))
 
       case .editor(.presented(.delegate(.create(let name, let description, let drafts)))):
         let podID = PodID(rawValue: uuid())

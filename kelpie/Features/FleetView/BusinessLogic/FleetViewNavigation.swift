@@ -1,8 +1,8 @@
 import Foundation
 
-/// Pure keyboard geometry for the Fleet View grid. Sections are rows of cards
-/// wrapped at `columnCount`; left/right walk the flattened order, up/down step by
-/// a row and cross section boundaries.
+/// Pure keyboard geometry for the Fleet View and Pods grids. Sections are rows of
+/// cards wrapped at `columnCount`; left/right walk the flattened order, up/down
+/// step by a row and cross section boundaries.
 enum FleetViewNavigation {
   enum Direction: Equatable, Sendable {
     case left, right, up, down
@@ -12,12 +12,12 @@ enum FleetViewNavigation {
   static let cardMinimumWidth: CGFloat = 260
   static let cardSpacing: CGFloat = 16
 
-  static func move(
-    from focused: FleetCardID?,
+  static func move<ID: Equatable>(
+    from focused: ID?,
     _ direction: Direction,
-    sections: [[FleetCardID]],
+    sections: [[ID]],
     columnCount: Int
-  ) -> FleetCardID? {
+  ) -> ID? {
     let flat = sections.flatMap { $0 }
     guard let first = flat.first else { return nil }
     guard let focused, let position = locate(focused, in: sections) else { return first }
@@ -44,11 +44,11 @@ enum FleetViewNavigation {
 
   /// Keeps `focused` when it survives; otherwise the nearest survivor by the
   /// previous order (first later card, else last earlier card, else the first).
-  static func reconcile(
-    focused: FleetCardID?,
-    previous: [FleetCardID],
-    current: [FleetCardID]
-  ) -> FleetCardID? {
+  static func reconcile<ID: Hashable>(
+    focused: ID?,
+    previous: [ID],
+    current: [ID]
+  ) -> ID? {
     guard let focused else { return nil }
     guard !current.contains(focused) else { return focused }
     let survivors = Set(current)
@@ -58,10 +58,25 @@ enum FleetViewNavigation {
     return later ?? earlier ?? current.first
   }
 
-  /// Cards per row for a container width, never more than six and never fewer than one.
-  static func columnCount(forWidth width: CGFloat) -> Int {
-    let fitting = Int((width + cardSpacing) / (cardMinimumWidth + cardSpacing))
-    return min(maximumColumnCount, max(1, fitting))
+  /// Cards per row for a container width, never more than `maximum` and never
+  /// fewer than one. The defaults are Fleet View's card metrics.
+  static func columnCount(
+    forWidth width: CGFloat,
+    minimumWidth: CGFloat = cardMinimumWidth,
+    spacing: CGFloat = cardSpacing,
+    maximum: Int = maximumColumnCount
+  ) -> Int {
+    let fitting = Int((width + spacing) / (minimumWidth + spacing))
+    return min(maximum, max(1, fitting))
+  }
+
+  /// `items` cut into the rows a grid of `columnCount` draws: the same rows
+  /// `move` steps through, so the views and the arrow keys cannot disagree.
+  static func rows<Element>(_ items: [Element], columnCount: Int) -> [[Element]] {
+    let columns = max(1, columnCount)
+    return stride(from: 0, to: items.count, by: columns).map {
+      Array(items[$0..<min($0 + columns, items.count)])
+    }
   }
 
   private struct Position {
@@ -70,7 +85,7 @@ enum FleetViewNavigation {
     let flat: Int
   }
 
-  private static func locate(_ id: FleetCardID, in sections: [[FleetCardID]]) -> Position? {
+  private static func locate<ID: Equatable>(_ id: ID, in sections: [[ID]]) -> Position? {
     var offset = 0
     for (sectionIndex, section) in sections.enumerated() {
       if let index = section.firstIndex(of: id) {

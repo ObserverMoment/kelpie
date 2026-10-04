@@ -225,6 +225,13 @@ struct RepositoriesFeature {
     var sidebarSelectedWorktreeIDs: Set<Worktree.ID> = []
     var nextPendingSidebarRevealID = 0
     var pendingSidebarReveal: PendingSidebarReveal?
+    /// The group header ⌃⌘↑/↓ last landed on. A header has nothing to show in
+    /// the detail pane, so it takes this cursor while the worktree selection
+    /// stays where it was. Cleared by the next selection. Not persisted.
+    var keyboardFocusedGroupID: RepositoryGroupID?
+    /// Whether the sidebar column is showing, reported by `ContentView`. While it
+    /// is hidden ⌃⌘↑/↓ skip group headers, which would be dead key presses.
+    var isSidebarVisible = true
     /// Browser-style back/forward stacks for worktree selection.
     /// Fresh selections push the previous worktree onto `back` and
     /// clear `forward`; the dedicated `worktreeHistoryBack` /
@@ -3961,6 +3968,7 @@ struct RepositoriesFeature {
       case .selectArchivedWorktrees:
         state.selection = .archivedWorktrees
         state.sidebarSelectedWorktreeIDs = []
+        state.keyboardFocusedGroupID = nil
         return .send(.delegate(.selectedWorktreeChanged(nil)))
 
       case .setSidebarSelectedWorktreeIDs(let worktreeIDs):
@@ -3997,16 +4005,10 @@ struct RepositoriesFeature {
         return .send(.selectWorktree(slots[index].id, focusTerminal: true))
 
       case .selectNextWorktree:
-        guard let id = state.worktreeID(byOffset: 1) else {
-          return .run { _ in NSSound.beep() }
-        }
-        return .send(.selectWorktree(id, focusTerminal: true))
+        return state.navigateSidebarEffect(byOffset: 1)
 
       case .selectPreviousWorktree:
-        guard let id = state.worktreeID(byOffset: -1) else {
-          return .run { _ in NSSound.beep() }
-        }
-        return .send(.selectWorktree(id, focusTerminal: true))
+        return state.navigateSidebarEffect(byOffset: -1)
 
       case .worktreeHistoryBack:
         return state.navigateWorktreeHistoryEffect(direction: .back)
@@ -5761,6 +5763,35 @@ extension RepositoriesFeature.State {
     return ids[offset > 0 ? 0 : ids.count - 1]
   }
 
+  /// The stop ⌃⌘↑/↓ moves to: `navigationStops` walked from the focused group
+  /// header, else from the selected row. A selection hidden inside a collapsed
+  /// group is not a stop, and a hidden sidebar has no header to land on, so both
+  /// keep the nearest-visible-row fallback.
+  func sidebarNavigationStop(byOffset offset: Int) -> SidebarStructure.NavigationStop? {
+    let stops = sidebarStructure.navigationStops
+    let current =
+      keyboardFocusedGroupID.map(SidebarStructure.NavigationStop.group)
+      ?? selectedWorktreeID.map(SidebarStructure.NavigationStop.worktree)
+    if isSidebarVisible, let current, let index = stops.firstIndex(of: current) {
+      return stops[(index + offset + stops.count) % stops.count]
+    }
+    return worktreeID(byOffset: offset).map(SidebarStructure.NavigationStop.worktree)
+  }
+
+  /// Moves the keyboard cursor one stop. A row is selected as usual; a group
+  /// header only takes the cursor, so the open worktree and its terminal stay put.
+  mutating func navigateSidebarEffect(byOffset offset: Int) -> Effect<RepositoriesFeature.Action> {
+    switch sidebarNavigationStop(byOffset: offset) {
+    case .group(let groupID):
+      keyboardFocusedGroupID = groupID
+      return .none
+    case .worktree(let worktreeID):
+      return .send(.selectWorktree(worktreeID, focusTerminal: true))
+    case nil:
+      return .run { _ in NSSound.beep() }
+    }
+  }
+
   /// Locate `currentID` inside the unfiltered ordered list when it's not in
   /// `visibleIDs` (i.e. hidden behind a collapsed group). Returns both the
   /// index and the unfiltered list so the caller doesn't have to recompute
@@ -6617,6 +6648,7 @@ extension RepositoriesFeature.State {
     let previousID = selectedWorktreeID
     selection = worktreeID.map(SidebarSelection.worktree)
     sidebarSelectedWorktreeIDs = worktreeID.map { [$0] } ?? []
+    keyboardFocusedGroupID = nil
     if recordHistory {
       recordWorktreeHistoryTransition(from: previousID, to: worktreeID)
     }
@@ -6698,6 +6730,7 @@ extension RepositoriesFeature.State {
   ) -> Effect<RepositoriesFeature.Action> {
     let previousSelection = selectedWorktreeID
     let previousSelectedWorktree = worktree(for: previousSelection)
+    keyboardFocusedGroupID = nil
 
     guard !selections.contains(.archivedWorktrees) else {
       selection = .archivedWorktrees

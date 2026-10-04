@@ -52,6 +52,18 @@ struct PodsFeatureTests {
     return pod
   }
 
+  private func memberCard(_ id: UUID) -> PodStructure.MemberCard {
+    PodStructure.MemberCard(
+      id: id, worktreeID: worktree, name: "m", description: "", registration: .pending, activity: nil,
+      worktreeName: nil)
+  }
+
+  private func structure(_ members: [UUID]) -> PodStructure {
+    PodStructure(
+      pods: [.init(id: podID, name: "Chat", description: "", members: members.map(memberCard))],
+      candidates: [])
+  }
+
   private func makeStore(
     _ state: PodsFeature.State,
     clock: TestClock<Duration>,
@@ -286,6 +298,59 @@ struct PodsFeatureTests {
     state.pods = [formedPod([(first, "a"), (second, "b")])]
     let store = makeStore(state, clock: TestClock(), delivered: LockIsolated([:]))
     await store.send(.openTapped(podID))
+    await store.receive(.delegate(.openWorkspace(podID)))
+  }
+
+  @Test(.dependencies) func arrowsWalkMemberTilesAndCrossPods() async {
+    let fourth = UUID(4)
+    var state = PodsFeature.State()
+    state.structure = PodStructure(
+      pods: [
+        .init(id: podID, name: "Chat", description: "", members: [first, second, third].map(memberCard)),
+        .init(id: PodID(rawValue: UUID(9)), name: "Other", description: "", members: [memberCard(fourth)]),
+      ],
+      candidates: [])
+    let store = makeStore(state, clock: TestClock(), delivered: LockIsolated([:]))
+
+    await store.send(.columnCountChanged(3)) { $0.columnCount = 3 }
+    await store.send(.moveFocus(.right)) { $0.focusedMemberID = first }
+    await store.send(.moveFocus(.right)) { $0.focusedMemberID = second }
+    await store.send(.moveFocus(.down)) { $0.focusedMemberID = fourth }
+    // The last pod's last row: there is nowhere further to go.
+    await store.send(.moveFocus(.down))
+    await store.send(.moveFocus(.right))
+    await store.send(.moveFocus(.up)) { $0.focusedMemberID = first }
+  }
+
+  @Test(.dependencies) func theFocusMovesToANeighbourWhenItsMemberLeaves() {
+    var state = PodsFeature.State()
+    state.applyStructure(structure([first, second, third]))
+    state.focusedMemberID = second
+
+    state.applyStructure(structure([first, third]))
+    #expect(state.focusedMemberID == third)
+
+    state.applyStructure(structure([]))
+    #expect(state.focusedMemberID == nil)
+  }
+
+  @Test(.dependencies) func anEmptyGridHasNoCursorAndReturnDoesNothing() async {
+    let store = makeStore(PodsFeature.State(), clock: TestClock(), delivered: LockIsolated([:]))
+
+    await store.send(.columnCountChanged(3)) { $0.columnCount = 3 }
+    // A width too narrow for one tile still draws one column.
+    await store.send(.columnCountChanged(0)) { $0.columnCount = 1 }
+    await store.send(.moveFocus(.down))
+    await store.send(.activateFocusedMember)
+  }
+
+  @Test(.dependencies) func returnOpensTheFocusedMembersPod() async {
+    var state = PodsFeature.State()
+    state.pods = [formedPod([(first, "a"), (second, "b")])]
+    state.focusedMemberID = second
+    let store = makeStore(state, clock: TestClock(), delivered: LockIsolated([:]))
+
+    await store.send(.activateFocusedMember)
     await store.receive(.delegate(.openWorkspace(podID)))
   }
 }

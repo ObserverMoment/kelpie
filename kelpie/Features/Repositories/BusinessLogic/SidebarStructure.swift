@@ -343,6 +343,39 @@ struct SidebarStructure: Equatable, Sendable {
   )
 }
 
+extension SidebarStructure {
+  /// One place ⌃⌘↑/↓ can land: a visible row, or a user group's header.
+  enum NavigationStop: Hashable, Sendable {
+    case group(RepositoryGroupID)
+    case worktree(Worktree.ID)
+  }
+
+  /// Top-down keyboard stops: the hotkey rows in their visible order, with each
+  /// user group's header ahead of its rows. A collapsed group is its header alone.
+  var navigationStops: [NavigationStop] {
+    func stops(in section: Section) -> [NavigationStop] {
+      switch section {
+      case .highlight(_, let rowIDs):
+        rowIDs.filter { slotByID[$0] != nil }.map(NavigationStop.worktree)
+      case .repositoryGroup(let groupID, _, let collapsed, let members):
+        [.group(groupID)] + (collapsed ? [] : members.flatMap(stops))
+      case .folder(_, let rowID):
+        unhoistedStops([rowID])
+      case .repository(_, let groups):
+        unhoistedStops(groups.flatMap(\.rowIDs))
+      case .failedRepository, .environmentBlockedRepository, .placeholder:
+        []
+      }
+    }
+    // `slotByID` holds exactly the rows the sidebar shows; a hoisted row is a
+    // stop in its highlight section, not under its repository.
+    func unhoistedStops(_ rowIDs: [Worktree.ID]) -> [NavigationStop] {
+      rowIDs.filter { slotByID[$0] != nil && !hoistedRowIDs.contains($0) }.map(NavigationStop.worktree)
+    }
+    return sections.flatMap(stops)
+  }
+}
+
 extension RepositoriesFeature.State {
   /// Equatable-diffs the freshly-built structure against the cached one so a
   /// no-op rebuild doesn't invalidate SwiftUI observation.

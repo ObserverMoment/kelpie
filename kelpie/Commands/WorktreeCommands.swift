@@ -1,8 +1,8 @@
 import AppKit
 import ComposableArchitecture
-import Sharing
 import KelpieSettingsFeature
 import KelpieSettingsShared
+import Sharing
 import SwiftUI
 
 #if DEBUG
@@ -134,28 +134,36 @@ private struct WorktreeMainMenu: Commands {
       .help("Jump to Latest Unread Notification (\(jumpToLatestUnread?.display ?? "none"))")
       .disabled(snapshot.notificationIndicatorCount == 0)
       Divider()
-      // Always-enabled; the reducer beeps when there's no worktree to move to.
+      // ⌃⌘ arrows: `AppFeature` routes them to the view that is showing, the
+      // sidebar or the Fleet and Pods grids. Next and Previous are always
+      // enabled; the reducer beeps when the sidebar has no worktree to move to.
       Button("Select Next", systemImage: "chevron.down") {
-        store.send(.repositories(.selectNextWorktree))
+        store.send(.navigate(.down))
       }
       .appKeyboardShortcut(selectNext)
-      .help("Select Next (\(selectNext?.display ?? "none"))")
+      .help("Select the next sidebar row, or move down in Fleet View (\(selectNext?.display ?? "none"))")
       Button("Select Previous", systemImage: "chevron.up") {
-        store.send(.repositories(.selectPreviousWorktree))
+        store.send(.navigate(.up))
       }
       .appKeyboardShortcut(selectPrevious)
-      .help("Select Previous (\(selectPrevious?.display ?? "none"))")
+      .help("Select the previous sidebar row, or move up in Fleet View (\(selectPrevious?.display ?? "none"))")
       Button("Back in Worktree History", systemImage: "chevron.left") {
-        store.send(.repositories(.worktreeHistoryBack))
+        store.send(.navigate(.left))
       }
       .appKeyboardShortcut(historyBack)
-      .help("Back in Worktree History (\(historyBack?.display ?? "none"))")
+      .help(
+        "Go back in worktree history, collapse the focused group, or move left in Fleet View "
+          + "(\(historyBack?.display ?? "none"))"
+      )
       .disabled(!snapshot.canNavigateBackward)
       Button("Forward in Worktree History", systemImage: "chevron.right") {
-        store.send(.repositories(.worktreeHistoryForward))
+        store.send(.navigate(.right))
       }
       .appKeyboardShortcut(historyForward)
-      .help("Forward in Worktree History (\(historyForward?.display ?? "none"))")
+      .help(
+        "Go forward in worktree history, expand the focused group, or move right in Fleet View "
+          + "(\(historyForward?.display ?? "none"))"
+      )
       .disabled(!snapshot.canNavigateForward)
       Menu("Select Worktree") {
         SelectWorktreeSubmenuItems(store: store, overrides: overrides)

@@ -29,12 +29,19 @@ extension AppFeature.State {
   func computeWorktreeMenuSnapshot() -> WorktreeMenuSnapshot {
     let pullRequestURL = repositories.selectedWorktreeSlice?.pullRequest
       .flatMap { URL(string: $0.url) }
+    // ⌃⌘←/→ also move through the Fleet and Pods grids and fold a focused
+    // sidebar group, so their menu items stay live there without any history.
+    // A pod workspace gives them nothing to move: disabled, they reach its terminals.
+    let arrowsDriveView = fleetView.isPresented || repositories.keyboardFocusedGroupID != nil
+    let arrowsHaveNoTarget = fleetView.isShowingPodWorkspace
     return WorktreeMenuSnapshot(
       shortcutOverrides: settings.shortcutOverrides,
       githubIntegrationEnabled: settings.githubIntegrationEnabled,
       canCreateWorktree: repositories.canCreateWorktree,
-      canNavigateBackward: repositories.canNavigateWorktreeHistoryBackward,
-      canNavigateForward: repositories.canNavigateWorktreeHistoryForward,
+      canNavigateBackward: !arrowsHaveNoTarget
+        && (arrowsDriveView || repositories.canNavigateWorktreeHistoryBackward),
+      canNavigateForward: !arrowsHaveNoTarget
+        && (arrowsDriveView || repositories.canNavigateWorktreeHistoryForward),
       isInitialLoadComplete: repositories.isInitialLoadComplete,
       selectedPullRequestURL: pullRequestURL,
       hasSelectedGitWorktree: repositories.selectedWorktreeSlice.map { !$0.isFolder } ?? false,
@@ -120,8 +127,12 @@ extension AppFeature.Action {
     // change that DOES affect a snapshot input flows back through a separate
     // `.terminalEvent.notificationIndicatorChanged` (counted above) or a
     // `.repositories` cache invalidation (the cacheInvalidations gate above).
-    case .agentPresence, .terminals, .commandPalette, .updates, .fleetView, .pods:
+    case .agentPresence, .terminals, .commandPalette, .updates, .pods:
       return false
+    // Presenting or closing the overlay flips whether ⌃⌘←/→ have a grid to move
+    // in; hiding the sidebar drops a focused group header.
+    case .fleetView, .sidebarVisibilityChanged:
+      return true
     // Lifecycle / UI / effect-dispatch actions never write snapshot inputs
     // directly; any downstream mutation flows back through a classified arm.
     case .applicationDidBecomeActive, .applicationDidResignActive,
@@ -138,7 +149,7 @@ extension AppFeature.Action {
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious,
+      .navigateSearchPrevious, .navigate,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
       .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,

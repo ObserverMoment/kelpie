@@ -2,6 +2,7 @@ import ComposableArchitecture
 import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
+import OrderedCollections
 import Testing
 
 @testable import KelpieSettingsFeature
@@ -19,13 +20,15 @@ struct AppFeatureFleetViewTests {
   }
 
   private static func makeStore(
-    worktree: Worktree, layouts: IdentifiedArrayOf<LayoutFeature.State> = [], selected: Bool = true
+    worktree: Worktree, layouts: IdentifiedArrayOf<LayoutFeature.State> = [], selected: Bool = true,
+    configure: (inout RepositoriesFeature.State) -> Void = { _ in }
   ) -> TestStoreOf<AppFeature> {
     var repositories = RepositoriesFeature.State(reconciledRepositories: [
       Repository(id: RepositoryID(root.path), rootURL: root, name: "fleet-app", worktrees: [worktree])
     ])
     repositories.isInitialLoadComplete = true
     if selected { repositories.selection = .worktree(worktree.id) }
+    configure(&repositories)
     repositories.recomputeSidebarStructureIfChanged()
     var state = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     state.terminals.layouts = layouts
@@ -206,5 +209,130 @@ struct AppFeatureFleetViewTests {
     await store.send(
       .agentPresence(.hookEventReceived(AgentHookEvent(agent: "claude", event: "idle", surfaceID: surfaceID))))
     #expect(store.state.fleetView.structure.allCards.first?.activity == .busy)
+  }
+
+  // MARK: - ⌃⌘ arrow routing
+
+  @Test(.dependencies) func navigateMovesTheFleetFocusWhileFleetViewIsUp() async {
+    let store = Self.makeStore(worktree: Self.makeWorktree("/tmp/fleet-app/wt"))
+    #expect(!store.state.worktreeMenuSnapshot.canNavigateBackward)
+
+    await store.send(.fleetView(.toggle))
+    // No worktree history, yet ←/→ have a grid to move in.
+    #expect(store.state.worktreeMenuSnapshot.canNavigateBackward)
+    #expect(store.state.worktreeMenuSnapshot.canNavigateForward)
+
+    await store.send(.navigate(.down))
+    await store.receive(\.fleetView.moveFocus)
+  }
+
+  @Test(.dependencies) func navigateMovesThePodFocusInPodsMode() async {
+    let store = Self.makeStore(worktree: Self.makeWorktree("/tmp/fleet-app/wt"))
+
+    await store.send(.fleetView(.togglePods))
+    await store.send(.navigate(.right))
+    await store.receive(\.fleetView.moveFocus)
+    await store.receive(\.pods.moveFocus)
+    // Moving the cursor changes no structure input, so it skips the recompute.
+    #expect(!AppFeature.Action.pods(.moveFocus(.right)).affectsFleetViewStructure)
+    #expect(!AppFeature.Action.pods(.columnCountChanged(2)).affectsFleetViewStructure)
+    #expect(!AppFeature.Action.pods(.activateFocusedMember).affectsFleetViewStructure)
+  }
+
+  @Test(.dependencies) func returnInPodsModeActivatesTheFocusedMember() async {
+    let store = Self.makeStore(worktree: Self.makeWorktree("/tmp/fleet-app/wt"))
+
+    await store.send(.fleetView(.togglePods))
+    await store.send(.fleetView(.activateFocusedCard))
+    await store.receive(\.pods.activateFocusedMember)
+  }
+
+  @Test(.dependencies) func navigateLeavesAPodWorkspaceToItsTerminals() async {
+    var state = AppFeature.State(
+      repositories: RepositoriesFeature.State(reconciledRepositories: []), settings: SettingsFeature.State())
+    state.fleetView.isPresented = true
+    state.fleetView.mode = .podWorkspace(PodID(rawValue: UUID()))
+    // Disabled menu items let ⌃⌘←/→ through to the focused terminal.
+    #expect(!state.computeWorktreeMenuSnapshot().canNavigateBackward)
+    #expect(!state.computeWorktreeMenuSnapshot().canNavigateForward)
+    let store = TestStore(initialState: state) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+    }
+
+    // Exhaustive store: any effect or state change fails the test.
+    await store.send(.navigate(.left))
+    await store.send(.navigate(.down))
+  }
+
+  @Test(.dependencies) func hidingTheSidebarDropsTheHeaderCursor() async {
+    let groupID = RepositoryGroupID("g1")
+    let store = Self.makeStore(worktree: Self.makeWorktree("/tmp/fleet-app/wt")) { repositories in
+      repositories.$sidebar.withLock { $0.addGroup(id: groupID, name: "Work") }
+      repositories.keyboardFocusedGroupID = groupID
+    }
+
+    await store.send(.sidebarVisibilityChanged(false))
+
+    #expect(!store.state.repositories.isSidebarVisible)
+    #expect(store.state.repositories.keyboardFocusedGroupID == nil)
+    #expect(!store.state.worktreeMenuSnapshot.canNavigateBackward)
+
+    await store.send(.sidebarVisibilityChanged(true))
+    #expect(store.state.repositories.isSidebarVisible)
+  }
+
+  @Test(.dependencies) func landingOnAHeaderEnablesFoldingFromTheMenu() async {
+    let groupID = RepositoryGroupID("g1")
+    let store = Self.makeStore(worktree: Self.makeWorktree("/tmp/fleet-app/wt")) { repositories in
+      repositories.$sidebar.withLock {
+        $0.addGroup(id: groupID, name: "Work")
+        $0.groups[groupID]?.repositoryIDs = [RepositoryID(Self.root.path)]
+      }
+    }
+
+    // No worktree history: ←/→ are live only because a header holds the cursor.
+    await store.send(.navigate(.up))
+    await store.receive(\.repositories.selectPreviousWorktree)
+    #expect(store.state.repositories.keyboardFocusedGroupID == groupID)
+    #expect(store.state.worktreeMenuSnapshot.canNavigateBackward)
+    #expect(store.state.worktreeMenuSnapshot.canNavigateForward)
+
+    await store.send(.repositories(.removeRepositoryGroup(groupID)))
+    #expect(store.state.repositories.keyboardFocusedGroupID == nil)
+    #expect(!store.state.worktreeMenuSnapshot.canNavigateBackward)
+  }
+
+  @Test(.dependencies) func navigateWalksTheSidebarInTheStandardView() async {
+    let store = Self.makeStore(worktree: Self.makeWorktree("/tmp/fleet-app/wt"))
+    store.dependencies.terminalClient.send = { _ in }
+
+    await store.send(.navigate(.down))
+    await store.receive(\.repositories.selectNextWorktree)
+    await store.send(.navigate(.up))
+    await store.receive(\.repositories.selectPreviousWorktree)
+    await store.send(.navigate(.left))
+    await store.receive(\.repositories.worktreeHistoryBack)
+    await store.send(.navigate(.right))
+    await store.receive(\.repositories.worktreeHistoryForward)
+    await store.finish()
+  }
+
+  @Test(.dependencies) func navigateHorizontallyFoldsAFocusedSidebarGroup() async {
+    let groupID = RepositoryGroupID("g1")
+    let store = Self.makeStore(worktree: Self.makeWorktree("/tmp/fleet-app/wt")) { repositories in
+      repositories.$sidebar.withLock { $0.addGroup(id: groupID, name: "Work") }
+      repositories.keyboardFocusedGroupID = groupID
+    }
+    #expect(store.state.worktreeMenuSnapshot.canNavigateBackward)
+
+    await store.send(.navigate(.left))
+    await store.receive(\.repositories.repositoryGroupExpansionChanged)
+    #expect(store.state.repositories.sidebar.groups[groupID]?.collapsed == true)
+
+    await store.send(.navigate(.right))
+    await store.receive(\.repositories.repositoryGroupExpansionChanged)
+    #expect(store.state.repositories.sidebar.groups[groupID]?.collapsed == false)
   }
 }

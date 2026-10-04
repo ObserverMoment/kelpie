@@ -297,6 +297,10 @@ struct AppFeature {
     case commandPalette(CommandPaletteFeature.Action)
     case fleetView(FleetViewFeature.Action)
     case pods(PodsFeature.Action)
+    /// ⌃⌘ + arrow: moves the keyboard cursor in whichever view is showing.
+    case navigate(FleetViewNavigation.Direction)
+    /// The sidebar column was shown or hidden; `ContentView` owns the visibility.
+    case sidebarVisibilityChanged(Bool)
     case openActionSelectionChanged(OpenWorktreeAction)
     /// Re-sweep LaunchServices. Activation is not enough on its own: an editor can be
     /// installed from a Kelpie terminal (`brew install --cask …`), which never takes
@@ -1744,7 +1748,23 @@ struct AppFeature {
         }
         return .none
 
+      // Pods mode keeps its own focus; Fleet View's reducer ignores these outside Fleet mode.
+      case .fleetView(.moveFocus(let direction)) where state.fleetView.mode == .pods:
+        return .send(.pods(.moveFocus(direction)))
+
+      case .fleetView(.activateFocusedCard) where state.fleetView.mode == .pods:
+        return .send(.pods(.activateFocusedMember))
+
       case .fleetView:
+        return .none
+
+      case .navigate(let direction):
+        return Self.navigationEffect(direction, state: state)
+
+      case .sidebarVisibilityChanged(let isVisible):
+        state.repositories.isSidebarVisible = isVisible
+        // A header nobody can see cannot hold the cursor.
+        if !isVisible { state.repositories.keyboardFocusedGroupID = nil }
         return .none
 
       case .pods(.delegate(.openWorkspace(let podID))):
@@ -4101,5 +4121,29 @@ struct AppFeature {
       return nil
     }
     return url
+  }
+}
+
+extension AppFeature {
+  /// ⌃⌘ arrows drive whichever view is showing: the Fleet or Pods grid while the
+  /// overlay is up, otherwise the sidebar, where ←/→ fold a focused group header
+  /// and are worktree history on a row.
+  static func navigationEffect(_ direction: FleetViewNavigation.Direction, state: State) -> Effect<Action> {
+    guard !state.fleetView.isPresented else {
+      // The pod workspace has no grid. Its ←/→ menu items are disabled, so
+      // those keys go to the terminals.
+      return state.fleetView.isShowingPodWorkspace ? .none : .send(.fleetView(.moveFocus(direction)))
+    }
+    switch direction {
+    case .down:
+      return .send(.repositories(.selectNextWorktree))
+    case .up:
+      return .send(.repositories(.selectPreviousWorktree))
+    case .left, .right:
+      if let groupID = state.repositories.keyboardFocusedGroupID {
+        return .send(.repositories(.repositoryGroupExpansionChanged(groupID, isExpanded: direction == .right)))
+      }
+      return .send(.repositories(direction == .left ? .worktreeHistoryBack : .worktreeHistoryForward))
+    }
   }
 }

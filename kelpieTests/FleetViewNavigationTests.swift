@@ -12,7 +12,7 @@ struct FleetViewNavigationTests {
   @Test func nilFocusMovesToFirstCard() {
     let first = ids(3)
     #expect(FleetViewNavigation.move(from: nil, .down, sections: [first], columnCount: 2) == first[0])
-    #expect(FleetViewNavigation.move(from: nil, .left, sections: [], columnCount: 2) == nil)
+    #expect(FleetViewNavigation.move(from: nil, .left, sections: [[FleetCardID]](), columnCount: 2) == nil)
   }
 
   @Test func leftRightWalkTheFlattenedOrderAndClamp() {
@@ -64,5 +64,23 @@ struct FleetViewNavigationTests {
     #expect(FleetViewNavigation.columnCount(forWidth: 300) == 1)
     #expect(FleetViewNavigation.columnCount(forWidth: 540) == 2)
     #expect(FleetViewNavigation.columnCount(forWidth: 5000) == 6)
+  }
+
+  @Test func moveWalksAnyIdentifier() {
+    let pods = [[1, 2, 3], [4]]
+    #expect(FleetViewNavigation.move(from: 2, .down, sections: pods, columnCount: 3) == 4)
+    #expect(FleetViewNavigation.move(from: 4, .up, sections: pods, columnCount: 3) == 1)
+    #expect(FleetViewNavigation.move(from: 4, .right, sections: pods, columnCount: 3) == 4)
+  }
+
+  @Test func rowsWrapAtTheColumnCount() {
+    #expect(FleetViewNavigation.rows([1, 2, 3, 4, 5], columnCount: 2) == [[1, 2], [3, 4], [5]])
+    #expect(FleetViewNavigation.rows([1, 2], columnCount: 0) == [[1], [2]])
+    #expect(FleetViewNavigation.rows([Int](), columnCount: 3).isEmpty)
+  }
+
+  @Test func columnCountTakesTheCallersTileMetrics() {
+    #expect(FleetViewNavigation.columnCount(forWidth: 700, minimumWidth: 220, spacing: 12, maximum: .max) == 3)
+    #expect(FleetViewNavigation.columnCount(forWidth: 5000, minimumWidth: 220, spacing: 12, maximum: .max) == 21)
   }
 }

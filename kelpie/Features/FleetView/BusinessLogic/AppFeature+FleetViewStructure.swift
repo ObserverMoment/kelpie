@@ -9,6 +9,9 @@ extension AppFeature.Action {
     switch self {
     case .repositories(let inner):
       return !inner.cacheInvalidations.isEmpty
+    // Moving the Pods cursor reads the structure and changes none of its inputs.
+    case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember):
+      return false
     // Pods add the pod-name caption and feed Pods mode, which the same pass computes.
     case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .pods:
       return true
@@ -28,7 +31,7 @@ extension AppFeature.Action {
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious,
+      .navigateSearchPrevious, .navigate, .sidebarVisibilityChanged,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
       .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,

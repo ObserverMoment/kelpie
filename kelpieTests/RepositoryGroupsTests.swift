@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import DependenciesTestSupport
 import Foundation
 import IdentifiedCollections
 import OrderedCollections
@@ -518,5 +519,219 @@ struct RepositoryGroupsTests {
     await store.send(.revealSelectedWorktreeInSidebar)
 
     #expect(store.state.sidebar.groups[groupID]?.collapsed == false)
+  }
+
+  // MARK: - Keyboard navigation
+
+  /// `repoA` inside the group, `repoB` ungrouped below it.
+  private func makeGroupedState(collapsed: Bool = false) -> RepositoriesFeature.State {
+    var state = makeState([repoA, repoB])
+    state.$sidebar.withLock { sidebar in
+      sidebar.addGroup(id: groupID, name: "Work")
+      sidebar.groups[groupID]?.repositoryIDs = [repoA]
+      sidebar.groups[groupID]?.collapsed = collapsed
+    }
+    state.recomputeSidebarStructureIfChanged()
+    return state
+  }
+
+  private var mainA: Worktree.ID { makeRepository(repoA).worktrees[0].id }
+  private var mainB: Worktree.ID { makeRepository(repoB).worktrees[0].id }
+  private var mainC: Worktree.ID { makeRepository(repoC).worktrees[0].id }
+
+  /// Sends `action` to a store on `initial` and runs the selection it causes.
+  private func stepping(
+    _ action: RepositoriesFeature.Action, from initial: RepositoriesFeature.State
+  ) async -> RepositoriesFeature.State {
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+    await store.send(action)
+    await store.skipReceivedActions()
+    return store.state
+  }
+
+  @Test(.dependencies) func navigationStopsPutAGroupHeaderAheadOfItsRows() {
+    #expect(
+      makeGroupedState().sidebarStructure.navigationStops
+        == [.group(groupID), .worktree(mainA), .worktree(mainB)])
+    #expect(
+      makeGroupedState(collapsed: true).sidebarStructure.navigationStops
+        == [.group(groupID), .worktree(mainB)])
+  }
+
+  @Test(.dependencies) func selectPreviousFromAGroupsFirstRowFocusesItsHeader() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainA)
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.selectPreviousWorktree)
+
+    #expect(store.state.keyboardFocusedGroupID == groupID)
+    #expect(store.state.selectedWorktreeID == mainA)
+  }
+
+  @Test(.dependencies) func navigationStopsFollowTheHotkeyRowsAroundAPinnedRowAndACollapsedRepository() {
+    let rootA = URL(fileURLWithPath: repoA.rawValue)
+    let wip = Worktree(
+      id: WorktreeID("/tmp/repo-a/wip"), name: "wip", detail: "",
+      workingDirectory: rootA.appending(path: "wip"), repositoryRootURL: rootA)
+    let repositoryA = Repository(
+      id: repoA, rootURL: rootA, name: "repo-a", worktrees: [makeRepository(repoA).worktrees[0], wip])
+    var state = RepositoriesFeature.State(
+      reconciledRepositories: [repositoryA, makeRepository(repoB), makeRepository(repoC)])
+    state.isInitialLoadComplete = true
+    state.reconcileSidebarForTesting()
+    state.$sidebar.withLock { sidebar in
+      sidebar.addGroup(id: groupID, name: "Work")
+      sidebar.groups[groupID]?.repositoryIDs = [repoA, repoB]
+      sidebar.sections[repoB, default: .init()].collapsed = true
+      sidebar.sections[repoA, default: .init()].buckets[.pinned, default: .init()].items[wip.id] = .init()
+      sidebar.sections[repoA, default: .init()].buckets[.unpinned, default: .init()].items
+        .removeValue(forKey: wip.id)
+    }
+    state.reconcileSidebarForTesting()
+    let structure = state.sidebarStructure
+
+    // The pinned row is a stop once, in its highlight section ahead of the
+    // header, and the collapsed repository's row is not a stop.
+    #expect(
+      structure.navigationStops
+        == [.worktree(wip.id), .group(groupID), .worktree(mainA), .worktree(mainC)])
+    let worktreeStops = structure.navigationStops.compactMap { stop -> Worktree.ID? in
+      if case .worktree(let worktreeID) = stop { worktreeID } else { nil }
+    }
+    #expect(worktreeStops == structure.slotByID.sorted { $0.value < $1.value }.map(\.key))
+  }
+
+  @Test(.dependencies) func selectPreviousFromTheTopHeaderWrapsToTheLastRow() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainA)
+    initial.keyboardFocusedGroupID = groupID
+
+    let state = await stepping(.selectPreviousWorktree, from: initial)
+
+    #expect(state.selectedWorktreeID == mainB)
+    #expect(state.keyboardFocusedGroupID == nil)
+  }
+
+  @Test(.dependencies) func aCursorOnAGroupThatIsGoneFallsBackToTheRows() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainA)
+    initial.keyboardFocusedGroupID = otherGroupID
+
+    let state = await stepping(.selectNextWorktree, from: initial)
+
+    #expect(state.selectedWorktreeID == mainB)
+    #expect(state.keyboardFocusedGroupID == nil)
+  }
+
+  @Test(.dependencies) func aSelectionHiddenInACollapsedGroupStepsToTheNearestVisibleRow() async {
+    var initial = makeGroupedState(collapsed: true)
+    initial.selection = .worktree(mainA)
+
+    let state = await stepping(.selectNextWorktree, from: initial)
+
+    #expect(state.selectedWorktreeID == mainB)
+    #expect(state.keyboardFocusedGroupID == nil)
+  }
+
+  @Test(.dependencies) func aSidebarSelectionClearsTheHeaderCursor() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainA)
+    initial.keyboardFocusedGroupID = groupID
+
+    let state = await stepping(.selectionChanged([.worktree(mainB)]), from: initial)
+
+    #expect(state.selectedWorktreeID == mainB)
+    #expect(state.keyboardFocusedGroupID == nil)
+  }
+
+  @Test(.dependencies) func showingArchivedWorktreesClearsTheHeaderCursor() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainA)
+    initial.keyboardFocusedGroupID = groupID
+
+    let state = await stepping(.selectArchivedWorktrees, from: initial)
+
+    #expect(state.keyboardFocusedGroupID == nil)
+  }
+
+  @Test(.dependencies) func selectPreviousSkipsHeadersWhileTheSidebarIsHidden() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainA)
+    initial.isSidebarVisible = false
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.selectPreviousWorktree)
+    await store.receive(\.selectWorktree)
+
+    #expect(store.state.keyboardFocusedGroupID == nil)
+    #expect(store.state.selectedWorktreeID == mainB)
+  }
+
+  @Test(.dependencies) func selectNextFromAFocusedHeaderSelectsItsFirstRow() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainB)
+    initial.keyboardFocusedGroupID = groupID
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.selectNextWorktree)
+    await store.receive(\.selectWorktree)
+
+    #expect(store.state.selectedWorktreeID == mainA)
+    #expect(store.state.keyboardFocusedGroupID == nil)
+  }
+
+  @Test(.dependencies) func selectNextFromACollapsedHeaderSkipsItsRows() async {
+    var initial = makeGroupedState(collapsed: true)
+    initial.selection = .worktree(mainA)
+    initial.keyboardFocusedGroupID = groupID
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.selectNextWorktree)
+    await store.receive(\.selectWorktree)
+
+    #expect(store.state.selectedWorktreeID == mainB)
+  }
+
+  @Test(.dependencies) func selectNextWrapsFromTheLastRowToTheFirstHeader() async {
+    var initial = makeGroupedState()
+    initial.selection = .worktree(mainB)
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.selectNextWorktree)
+
+    #expect(store.state.keyboardFocusedGroupID == groupID)
+    #expect(store.state.selectedWorktreeID == mainB)
+  }
+
+  @Test(.dependencies) func removingTheFocusedGroupClearsTheFocus() async {
+    var initial = makeGroupedState()
+    initial.keyboardFocusedGroupID = groupID
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.removeRepositoryGroup(groupID))
+
+    #expect(store.state.keyboardFocusedGroupID == nil)
   }
 }

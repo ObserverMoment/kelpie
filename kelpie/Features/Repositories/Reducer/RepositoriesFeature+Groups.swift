@@ -26,6 +26,7 @@ extension RepositoriesFeature {
 
       case .removeRepositoryGroup(let groupID):
         guard state.sidebar.groups[groupID] != nil else { return .none }
+        if state.keyboardFocusedGroupID == groupID { state.keyboardFocusedGroupID = nil }
         let knownIDs = state.orderedRepositoryIDs()
         let ungroupable = state.ungroupableRepositoryIDs
         state.$sidebar.withLock { sidebar in

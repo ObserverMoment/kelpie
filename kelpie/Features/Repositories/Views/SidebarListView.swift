@@ -69,6 +69,7 @@ struct SidebarListView: View {
             allowsReordering: sectionSort.allowsReordering,
             groupIndex: index,
             groupCount: groupSections.count,
+            isKeyboardFocused: state.keyboardFocusedGroupID.map { section.id == .repositoryGroup($0) } ?? false,
             store: store,
             terminalManager: terminalManager
           )
@@ -146,6 +147,17 @@ struct SidebarListView: View {
       .task(id: pendingSidebarReveal?.id) {
         await revealPendingSidebarWorktree(pendingSidebarReveal, with: scrollProxy)
       }
+      // A shortcut can select a row, or put the cursor on a group header, that
+      // is scrolled out of view. No anchor: the list moves the least distance
+      // that shows it, and stays put when it is already visible.
+      .onChange(of: state.selectedWorktreeID) { _, worktreeID in
+        guard let worktreeID else { return }
+        scrollProxy.scrollTo(worktreeID)
+      }
+      .onChange(of: state.keyboardFocusedGroupID) { _, groupID in
+        guard let groupID else { return }
+        scrollProxy.scrollTo(groupID)
+      }
     }
   }
 
@@ -179,6 +191,8 @@ private struct SidebarSectionDispatcher: View {
   /// Move Up / Move Down menu items.
   var groupIndex = 0
   var groupCount = 0
+  /// Whether a `.repositoryGroup` section's header holds the ⌃⌘↑/↓ cursor.
+  var isKeyboardFocused = false
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
 
@@ -235,6 +249,7 @@ private struct SidebarSectionDispatcher: View {
         groupID: groupID,
         name: name,
         isCollapsed: isCollapsed,
+        isKeyboardFocused: isKeyboardFocused,
         members: members,
         groupIndex: groupIndex,
         groupCount: groupCount,
@@ -441,6 +456,7 @@ private struct SidebarRepositoryGroupSection: View {
   let groupID: RepositoryGroupID
   let name: String
   let isCollapsed: Bool
+  let isKeyboardFocused: Bool
   let members: [SidebarStructure.Section]
   let groupIndex: Int
   let groupCount: Int
@@ -458,12 +474,14 @@ private struct SidebarRepositoryGroupSection: View {
         groupID: groupID,
         name: name,
         isCollapsed: isCollapsed,
+        isKeyboardFocused: isKeyboardFocused,
         groupIndex: groupIndex,
         groupCount: groupCount,
         store: store
       )
       .listRowBackground(SidebarGroupCardFill(edge: isCollapsed ? .single : .top))
       .moveDisabled(true)
+      .id(groupID)
       if !isCollapsed {
         // Members reorder among themselves only: the move maps into this
         // group's slice of the reorderable order, never across groups.
@@ -572,10 +590,16 @@ private struct SidebarGroupHeaderRow: View {
   /// sit in the folder's body like the toolbar symbol's grid.
   private static let groupGlyphDotsScale: CGFloat = 0.8
   private static let groupGlyphDotsDrop: CGFloat = 1.5
+  /// The ⌃⌘↑/↓ cursor fill: its corner radius, and how far it reaches past the
+  /// label so it reads as a selected row.
+  private static let cursorCornerRadius: CGFloat = 5
+  private static let cursorOutset = CGSize(width: 4, height: 2)
 
   let groupID: RepositoryGroupID
   let name: String
   let isCollapsed: Bool
+  /// Passed in so a cursor move redraws two headers, not every header.
+  let isKeyboardFocused: Bool
   let groupIndex: Int
   let groupCount: Int
   let store: StoreOf<RepositoriesFeature>
@@ -642,6 +666,16 @@ private struct SidebarGroupHeaderRow: View {
       }
       .help(isCollapsed ? "Expand group" : "Collapse group")
     }
+    // The ⌃⌘↑/↓ cursor, drawn like a selected row.
+    .background {
+      if isKeyboardFocused {
+        RoundedRectangle(cornerRadius: Self.cursorCornerRadius)
+          .fill(.selection)
+          .padding(.horizontal, -Self.cursorOutset.width)
+          .padding(.vertical, -Self.cursorOutset.height)
+      }
+    }
+    .accessibilityAddTraits(isKeyboardFocused ? .isSelected : [])
     // Top padding matches the card's top margin so the title sits inside it; a
     // collapsed group has no padding row below, so the header pads itself.
     .padding(

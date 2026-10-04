@@ -21,18 +21,32 @@ struct PodsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        ScrollView {
-          LazyVStack(alignment: .leading, spacing: 20) {
-            ForEach(store.structure.pods) { pod in
-              PodCardView(
-                pod: pod,
-                onOpen: { store.send(.openTapped(pod.id)) },
-                onAddMembers: { store.send(.addMembersTapped(pod.id)) },
-                onDisband: { store.send(.disbandTapped(pod.id)) }
-              )
+        ScrollViewReader { scrollProxy in
+          ScrollView {
+            // Not lazy: `scrollTo` has to resolve a member tile in a pod that is off screen.
+            VStack(alignment: .leading, spacing: 20) {
+              ForEach(store.structure.pods) { pod in
+                PodCardView(
+                  pod: pod,
+                  columnCount: store.columnCount,
+                  focusedMemberID: store.focusedMemberID,
+                  onOpen: { store.send(.openTapped(pod.id)) },
+                  onAddMembers: { store.send(.addMembersTapped(pod.id)) },
+                  onDisband: { store.send(.disbandTapped(pod.id)) }
+                )
+              }
             }
+            .padding(.bottom, 24)
           }
-          .padding(.bottom, 24)
+          .onGeometryChange(for: Int.self) { proxy in
+            PodCardView.columnCount(forListWidth: proxy.size.width)
+          } action: { columnCount in
+            store.send(.columnCountChanged(columnCount))
+          }
+          .onChange(of: store.focusedMemberID) { _, focused in
+            guard let focused else { return }
+            withAnimation(.easeOut(duration: 0.15)) { scrollProxy.scrollTo(focused, anchor: nil) }
+          }
         }
       }
     }
