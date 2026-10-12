@@ -274,6 +274,7 @@ private struct MailMessageViewer: View {
           .help("Mark as done and remove from the inbox (⌥⌘↩)")
       }
       .buttonStyle(.borderless)
+      .appFont(.body)
       .padding(.horizontal, 20)
       .padding(.vertical, 10)
       .background(Color(nsColor: .controlBackgroundColor))
@@ -281,6 +282,8 @@ private struct MailMessageViewer: View {
       ScrollView {
         StructuredText(markdown: message.body)
           .textual.structuredTextStyle(.gitHub)
+          // Textual sizes headings and code from the environment font.
+          .appFont(.body)
           .textual.textSelection(.enabled)
           .frame(maxWidth: Self.columnWidth, alignment: .leading)
           .padding(.horizontal, Self.columnPadding)
