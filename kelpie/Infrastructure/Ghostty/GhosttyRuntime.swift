@@ -627,7 +627,11 @@ final class GhosttyRuntime {
       loadUserFile(at: kelpieUserConfigURL, into: config)
     }
     // Tier 4: app-owned overrides, always last so nothing can override them.
-    loadAppOwnedOverrides(into: config, shortcutOverrides: settingsFile.global.shortcutOverrides)
+    loadAppOwnedOverrides(
+      into: config,
+      shortcutOverrides: settingsFile.global.shortcutOverrides,
+      fontSize: settingsFile.global.chromeTextSize
+    )
     ghostty_config_finalize(config)
     logDiagnostics(of: config)
     return (config, userOpacity)
@@ -706,6 +710,12 @@ final class GhosttyRuntime {
       """
   }
 
+  /// Sizes the terminal from the app's font size setting. Loaded in the final
+  /// tier, so it overrides `font-size` in the user's Ghostty config.
+  internal static func fontSizeOverride(_ size: ChromeTextSize) -> String {
+    "font-size = \(size.points)"
+  }
+
   private static var appVersion: String? {
     let info = Bundle.main.infoDictionary
     let candidates = [info?["CFBundleShortVersionString"], info?["CFBundleVersion"]]
@@ -731,15 +741,17 @@ final class GhosttyRuntime {
     tempURL.path.withCString { ghostty_config_load_file(config, $0) }
   }
 
-  /// Writes the app-owned overrides (close predicate, TERM_PROGRAM, keybind
-  /// unbinds) as the final config tier so nothing can override them.
+  /// Writes the app-owned overrides (close predicate, TERM_PROGRAM, font size,
+  /// keybind unbinds) as the final config tier so nothing can override them.
   private static func loadAppOwnedOverrides(
     into config: ghostty_config_t,
-    shortcutOverrides: [AppShortcutID: AppShortcutOverride]
+    shortcutOverrides: [AppShortcutID: AppShortcutOverride],
+    fontSize: ChromeTextSize
   ) {
     let contents = [
       appOwnedOverridesString,
       terminalProgramOverrides(version: appVersion),
+      fontSizeOverride(fontSize),
       AppShortcuts.ghosttyKeybindConfigLines(from: shortcutOverrides).joined(separator: "\n"),
     ]
     .filter { !$0.isEmpty }

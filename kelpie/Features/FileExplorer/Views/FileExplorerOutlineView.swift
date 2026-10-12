@@ -53,7 +53,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
   /// table font the label; a scaled size needs `.custom` so the table stops
   /// overriding the cell's font.
   static func rowSizeStyle(for size: ChromeTextSize) -> NSTableView.RowSizeStyle {
-    size == .standard ? .default : .custom
+    size == .default ? .default : .custom
   }
 
   func makeCoordinator() -> Coordinator {
@@ -192,7 +192,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
     private(set) var tree: FileExplorerFeature.TreeState?
     /// Applied to every cell in `viewFor`; a change forces a rebuild so rows
     /// re-measure at the new font.
-    private(set) var chromeTextSize: ChromeTextSize = .standard
+    private(set) var chromeTextSize: ChromeTextSize = .default
     private var fileOpenActions: [OpenWorktreeAction] = []
     private var resolvedOpenAction: OpenWorktreeAction?
     private var menuIcon: ((OpenWorktreeAction) -> NSImage?)?
@@ -1202,7 +1202,7 @@ enum FileExplorerFileIcon {
 enum FileExplorerCellFont {
   static func scaled(_ style: NSFont.TextStyle, _ size: ChromeTextSize) -> NSFont {
     let base = NSFont.preferredFont(forTextStyle: style)
-    guard size != .standard else { return base }
+    guard size != .default else { return base }
     return .systemFont(ofSize: (base.pointSize * CGFloat(size.scale)).rounded())
   }
 
@@ -1212,7 +1212,7 @@ enum FileExplorerCellFont {
 
   static func badge(_ size: ChromeTextSize, weight: NSFont.Weight) -> NSFont {
     let base = NSFont.preferredFont(forTextStyle: .caption1).pointSize
-    let point = size == .standard ? base : (base * CGFloat(size.scale)).rounded()
+    let point = size == .default ? base : (base * CGFloat(size.scale)).rounded()
     return .monospacedSystemFont(ofSize: point, weight: weight)
   }
 }
@@ -1237,7 +1237,7 @@ private final class FileExplorerEntryCellView: NSTableCellView {
   private var renderedDecoration: GitRowDecoration?
   private var renderedIsSymbolicLink = false
   /// Set per row so the badge redraw on selection uses the same scaled size.
-  private var chromeTextSize: ChromeTextSize = .standard
+  private var chromeTextSize: ChromeTextSize = .default
   /// Inline-rename callbacks and state, live only while the label is editable.
   private var renameCommit: ((String) -> Void)?
   private var renameCancelled = false

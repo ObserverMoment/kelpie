@@ -34,7 +34,7 @@ enum GhosttyUserConfigFile {
     # read on its own. Anything Ghostty understands works here.
     # Example:
     # theme = catppuccin-mocha
-    # font-size = 14
+    # cursor-style = bar
     """
 
   static func createWithTemplateIfNeeded() throws {

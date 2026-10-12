@@ -532,12 +532,12 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     terminalHibernationEnabled =
       try container.decodeIfPresent(Bool.self, forKey: .terminalHibernationEnabled)
       ?? Self.default.terminalHibernationEnabled
-    // Old settings files predate this key; they migrate to the system size. An
-    // unrecognized value falls back the same way rather than throwing, which
+    // Old settings files predate this key and migrate to the system size; a
+    // size name from before sizes were points decodes to its point size. An
+    // unreadable value falls back to the default rather than throwing, which
     // would reset the whole file to defaults.
     chromeTextSize =
-      ((try? container.decodeIfPresent(String.self, forKey: .chromeTextSize)) ?? nil)
-      .flatMap(ChromeTextSize.init(rawValue:))
+      ((try? container.decodeIfPresent(ChromeTextSize.self, forKey: .chromeTextSize)) ?? nil)
       ?? Self.default.chromeTextSize
     // Pre-feature files omit this key; background refresh defaults on.
     automaticRepositoryRefreshEnabled =

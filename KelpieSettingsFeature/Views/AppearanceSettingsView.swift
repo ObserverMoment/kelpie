@@ -115,10 +115,10 @@ public struct AppearanceSettingsView: View {
           }
         } label: {
           HStack(spacing: 6) {
-            Text("Text size")
+            Text("Font size")
             BetaBadge()
           }
-          Text("Sizes all non-terminal text. The terminal keeps its own font size.")
+          Text("Sizes the app and terminal text. Overrides font-size in your Ghostty config.")
         }
       }
       Section {

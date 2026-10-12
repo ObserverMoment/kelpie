@@ -1,34 +1,50 @@
 import Foundation
 
-/// Accessibility size for the app chrome's text. A fixed set of sizes rather
-/// than a free-form scale, so the layout only has to hold at three known points.
-/// Applied by resolving each semantic font explicitly (see `View.appFont`),
-/// because macOS SwiftUI does not resize text for Dynamic Type.
-public nonisolated enum ChromeTextSize: String, CaseIterable, Codable, Identifiable, Sendable {
-  case standard
-  case large
-  case extraLarge
+/// The app's font size in points, shared by the chrome and the terminal. The
+/// chrome scales each semantic font by `scale` (see `View.appFont`), because
+/// macOS SwiftUI does not resize text for Dynamic Type; the terminal takes
+/// `points` as Ghostty's `font-size`.
+public nonisolated struct ChromeTextSize: Hashable, CaseIterable, Codable, Identifiable, Sendable {
+  /// The sizes Settings offers; the layout has to hold at both ends.
+  public static let range = 10...24
+  /// macOS body text, so Default leaves the chrome at the system sizes.
+  public static let `default` = ChromeTextSize(points: 13)
+  public static let allCases = range.map(ChromeTextSize.init(points:))
 
-  public static let `default` = ChromeTextSize.standard
+  public let points: Int
 
-  public var id: String { rawValue }
+  /// Clamps to `range`, so a hand-edited file can't size text past the layout.
+  public init(points: Int) {
+    self.points = min(max(points, Self.range.lowerBound), Self.range.upperBound)
+  }
 
-  public var label: String {
-    switch self {
-    case .standard: "Regular"
-    case .large: "Large"
-    case .extraLarge: "Extra Large"
+  public var id: Int { points }
+
+  public var label: String { "\(points) pt" }
+
+  /// Multiplier applied to each semantic font's system point size, so body text
+  /// lands on `points`.
+  public var scale: Double { Double(points) / Double(Self.default.points) }
+
+  /// Reads the point size, or a name saved before sizes were points. Each name
+  /// maps to the body size it rendered at (13 x 1.15 and 13 x 1.3, rounded).
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if let points = try? container.decode(Int.self) {
+      self.init(points: points)
+      return
+    }
+    switch try container.decode(String.self) {
+    case "standard": self = .default
+    case "large": self.init(points: 15)
+    case "extraLarge": self.init(points: 17)
+    case let name:
+      throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown text size \(name)")
     }
   }
 
-  /// Multiplier applied to each semantic font's system point size. macOS has no
-  /// Dynamic Type step table to inherit, so the two steps are chosen to land
-  /// near where iOS's `.xLarge` and `.xxLarge` sit.
-  public var scale: Double {
-    switch self {
-    case .standard: 1.0
-    case .large: 1.15
-    case .extraLarge: 1.3
-    }
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.singleValueContainer()
+    try container.encode(points)
   }
 }

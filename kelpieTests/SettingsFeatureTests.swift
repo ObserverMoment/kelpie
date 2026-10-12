@@ -138,18 +138,18 @@ struct SettingsFeatureTests {
       SettingsFeature()
     }
 
-    await store.send(.binding(.set(\.chromeTextSize, .extraLarge))) {
-      $0.chromeTextSize = .extraLarge
+    await store.send(.binding(.set(\.chromeTextSize, ChromeTextSize(points: 20)))) {
+      $0.chromeTextSize = ChromeTextSize(points: 20)
     }
     await store.receive(\.delegate.settingsChanged)
-    #expect(settingsFile.global.chromeTextSize == .extraLarge)
+    #expect(settingsFile.global.chromeTextSize == ChromeTextSize(points: 20))
   }
 
   @Test(.dependencies) func settingsLoadedAppliesChromeTextSize() async {
     // The write path is covered above; this covers the read side, that a size
     // on disk reaches feature state instead of showing Default in the picker.
     var loaded = GlobalSettings.default
-    loaded.chromeTextSize = .extraLarge
+    loaded.chromeTextSize = ChromeTextSize(points: 20)
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = loaded }
 
@@ -159,7 +159,7 @@ struct SettingsFeatureTests {
     store.exhaustivity = .off(showSkippedAssertions: false)
 
     await store.send(.settingsLoaded(loaded))
-    #expect(store.state.chromeTextSize == .extraLarge)
+    #expect(store.state.chromeTextSize == ChromeTextSize(points: 20))
     await store.skipReceivedActions()
   }
 
@@ -167,7 +167,7 @@ struct SettingsFeatureTests {
     // `persist` merges owned fields onto the live settings; chromeTextSize is
     // owned, so it must round-trip rather than reset to its default.
     var initialSettings = GlobalSettings.default
-    initialSettings.chromeTextSize = .large
+    initialSettings.chromeTextSize = ChromeTextSize(points: 15)
     @Shared(.settingsFile) var settingsFile
     $settingsFile.withLock { $0.global = initialSettings }
 
@@ -179,7 +179,7 @@ struct SettingsFeatureTests {
       $0.terminalHibernationEnabled = false
     }
     await store.receive(\.delegate.settingsChanged)
-    #expect(settingsFile.global.chromeTextSize == .large)
+    #expect(settingsFile.global.chromeTextSize == ChromeTextSize(points: 15))
   }
 
   @Test(.dependencies) func unrelatedSettingsChangeKeepsNotificationInspectorPrefs() async {
@@ -258,7 +258,7 @@ struct SettingsFeatureTests {
     loaded.remoteSessionPersistenceEnabled = false
     loaded.appVisibility = .menuBar
     loaded.terminalHibernationEnabled = false
-    loaded.chromeTextSize = .extraLarge
+    loaded.chromeTextSize = ChromeTextSize(points: 20)
     loaded.automaticRepositoryRefreshEnabled = false
     loaded.hoverFocusMode = .terminals
     loaded.globalToggleVisibilityHotkey = hotkey

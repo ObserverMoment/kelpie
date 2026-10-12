@@ -1032,11 +1032,11 @@ struct SettingsFilePersistenceTests {
 
   @Test(.dependencies) func decodesMistypedChromeTextSizeAsDefaultWithoutDiscardingTheFile() throws {
     // A hand-edit can produce the wrong JSON type, not just an unknown string;
-    // the `try?` on the String decode must swallow it so one bad field can't
-    // reset the file.
+    // the `try?` on the decode must swallow it so one bad field can't reset the
+    // file.
     let json = """
       {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
-      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":3}
+      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":true}
       """
     let storage = MutableTestStorage(initialData: Data(json.utf8))
 
@@ -1051,6 +1051,25 @@ struct SettingsFilePersistenceTests {
     #expect(settings.global.appearanceMode == .light)
   }
 
+  @Test(.dependencies) func decodesLegacyChromeTextSizeNameAsItsPointSize() throws {
+    // Files from before sizes were points saved a name; Large rendered body text
+    // at 15 pt, so it keeps that size.
+    let json = """
+      {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"chromeTextSize":"large"}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.chromeTextSize == ChromeTextSize(points: 15))
+  }
+
   @Test(.dependencies) func roundTripsExplicitChromeTextSize() throws {
     let storage = SettingsTestStorage()
 
@@ -1058,7 +1077,7 @@ struct SettingsFilePersistenceTests {
       $0.settingsFileStorage = storage.storage
     } operation: {
       @Shared(.settingsFile) var settings: SettingsFile
-      $settings.withLock { $0.global.chromeTextSize = .extraLarge }
+      $settings.withLock { $0.global.chromeTextSize = ChromeTextSize(points: 20) }
     }
 
     let reloaded: SettingsFile = withDependencies {
@@ -1068,7 +1087,7 @@ struct SettingsFilePersistenceTests {
       return reloaded
     }
 
-    #expect(reloaded.global.chromeTextSize == .extraLarge)
+    #expect(reloaded.global.chromeTextSize == ChromeTextSize(points: 20))
   }
 
   @Test(.dependencies) func decodesUnrecognizedHoverFocusModeAsDefaultWithoutDiscardingTheFile() throws {

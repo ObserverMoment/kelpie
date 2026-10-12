@@ -13,20 +13,27 @@ final class GhosttyShortcutManager {
   @ObservationIgnored
   @Shared(.settingsFile) private var settingsFile: SettingsFile
   @ObservationIgnored
-  private var overridesSubscription: AnyCancellable?
+  private var configSubscriptions: Set<AnyCancellable> = []
 
   init(runtime: GhosttyRuntime) {
     self.runtime = runtime
     runtime.onConfigChange = { [weak self] in
       self?.refresh()
     }
-    // Rebinding a shortcut regenerates the app's unbind config lines; reload
-    // here, not in a window's view tree, so the terminal releases the new chord
-    // even while no window is open. A key-path map keeps the transform
-    // nonisolated: the publisher emits off the main actor, so an inline closure
-    // here (main-actor-isolated) would trap before the receive(on:) hop.
-    overridesSubscription = $settingsFile.publisher
-      .map(\.global.shortcutOverrides)
+    // Rebinding a shortcut regenerates the app's unbind config lines, and the
+    // font size writes the terminal's `font-size`; reload here, not in a
+    // window's view tree, so the terminal takes the change even while no
+    // window is open.
+    reloadConfigWhenSettingChanges(\.global.shortcutOverrides)
+    reloadConfigWhenSettingChanges(\.global.chromeTextSize)
+  }
+
+  /// A key-path map keeps the transform nonisolated: the publisher emits off the
+  /// main actor, so an inline closure here (main-actor-isolated) would trap
+  /// before the receive(on:) hop.
+  private func reloadConfigWhenSettingChanges<Value: Equatable>(_ keyPath: KeyPath<SettingsFile, Value>) {
+    $settingsFile.publisher
+      .map(keyPath)
       .removeDuplicates()
       .dropFirst()
       .receive(on: DispatchQueue.main)
@@ -35,6 +42,7 @@ final class GhosttyShortcutManager {
           runtime?.reloadAppConfig()
         }
       }
+      .store(in: &configSubscriptions)
   }
 
   func refresh() {

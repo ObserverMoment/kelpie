@@ -93,6 +93,13 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(overrides.contains("keybind = super+shift+f=unbind"))
   }
 
+  @Test func fontSizeOverrideSetsTheTerminalPointSize() {
+    // The font size is app-owned, so it lives in the final tier and overrides
+    // `font-size` in the user's Ghostty config, not in the cosmetic defaults.
+    #expect(GhosttyRuntime.fontSizeOverride(ChromeTextSize(points: 16)) == "font-size = 16")
+    #expect(!GhosttyRuntime.bundledOverridesString.contains("font-size"))
+  }
+
   @Test func configResolutionMergeLoadsBothTiers() {
     let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, kelpieUserConfigExists: true)
     #expect(plan.loadUserDefaultFiles)

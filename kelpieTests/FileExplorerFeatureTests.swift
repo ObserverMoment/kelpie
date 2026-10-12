@@ -2183,7 +2183,7 @@ struct FileExplorerFeatureTests {
 /// The file explorer draws with AppKit, so it reimplements the chrome scale for
 /// `NSFont`. These pin it to the SwiftUI `AppFontMetrics` math it must match.
 struct FileExplorerCellFontTests {
-  @Test(arguments: [ChromeTextSize.large, .extraLarge])
+  @Test(arguments: [ChromeTextSize(points: 10), ChromeTextSize(points: 15), ChromeTextSize(points: 24)])
   func labelSizeMatchesTheSwiftUIChromeScale(_ size: ChromeTextSize) {
     #expect(
       FileExplorerCellFont.label(size).pointSize
@@ -2191,11 +2191,11 @@ struct FileExplorerCellFontTests {
     )
   }
 
-  @Test func standardKeepsTheExactPreferredFonts() {
-    #expect(FileExplorerCellFont.label(.standard) == NSFont.preferredFont(forTextStyle: .body))
-    #expect(FileExplorerCellFont.scaled(.callout, .standard) == NSFont.preferredFont(forTextStyle: .callout))
+  @Test func defaultKeepsTheExactPreferredFonts() {
+    #expect(FileExplorerCellFont.label(.default) == NSFont.preferredFont(forTextStyle: .body))
+    #expect(FileExplorerCellFont.scaled(.callout, .default) == NSFont.preferredFont(forTextStyle: .callout))
     #expect(
-      FileExplorerCellFont.badge(.standard, weight: .regular)
+      FileExplorerCellFont.badge(.default, weight: .regular)
         == .monospacedSystemFont(
           ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
     )

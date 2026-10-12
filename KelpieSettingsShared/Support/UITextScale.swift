@@ -5,7 +5,7 @@ import SwiftUI
 /// `appChromeTextSize`; read by `appFont`. An explicit size is required because
 /// macOS SwiftUI does not resize text for Dynamic Type.
 private struct UIChromeTextSizeKey: EnvironmentKey {
-  static let defaultValue: ChromeTextSize = .standard
+  static let defaultValue: ChromeTextSize = .default
 }
 
 extension EnvironmentValues {
@@ -47,12 +47,12 @@ enum AppFontMetrics {
     (pointSize(for: style) * size.scale).rounded()
   }
 
-  /// The font `appFont` applies. At `.standard` it returns the exact semantic
+  /// The font `appFont` applies. At `.default` it returns the exact semantic
   /// font so Default text is left untouched.
   static func resolvedFont(
     for style: Font.TextStyle, size: ChromeTextSize, weight: Font.Weight?, monospaced: Bool
   ) -> Font {
-    guard size != .standard else {
+    guard size != .default else {
       var font = Font.system(style)
       if let weight { font = font.weight(weight) }
       if monospaced { font = font.monospaced() }
@@ -65,21 +65,21 @@ enum AppFontMetrics {
     return font.weight(weight ?? defaultWeight(for: style))
   }
 
-  /// The font `appFontInheriting` applies, or `nil` at `.standard` to leave the
+  /// The font `appFontInheriting` applies, or `nil` at `.default` to leave the
   /// container's own styling in place.
   static func inheritedFont(
     for base: Font.TextStyle, size: ChromeTextSize, weight: Font.Weight?
   ) -> Font? {
-    guard size != .standard else { return nil }
+    guard size != .default else { return nil }
     return Font.system(size: scaledPointSize(for: base, size: size))
       .weight(weight ?? defaultWeight(for: base))
   }
 
-  /// Scaled base font for a bounded container, or `nil` at `.standard`. Raising
+  /// Scaled base font for a bounded container, or `nil` at `.default`. Raising
   /// the environment font lets a `Form` derive its own label hierarchy from a
   /// larger base, so implicit text scales without a per-label opt-in.
   static func baseFont(for size: ChromeTextSize) -> Font? {
-    guard size != .standard else { return nil }
+    guard size != .default else { return nil }
     return Font.system(size: scaledPointSize(for: .body, size: size))
   }
 

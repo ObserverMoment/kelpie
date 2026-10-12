@@ -4,55 +4,71 @@ import Testing
 @testable import KelpieSettingsShared
 
 struct ChromeTextSizeTests {
-  @Test func defaultIsTheUnmodifiedSystemSize() {
-    #expect(ChromeTextSize.default == .standard)
+  @Test func defaultIsTheSystemBodySize() {
+    #expect(ChromeTextSize.default.points == 13)
     #expect(ChromeTextSize.default.scale == 1.0)
   }
 
-  @Test func sizesGrowMonotonically() {
-    let scales = ChromeTextSize.allCases.map(\.scale)
-    #expect(scales == scales.sorted())
-    #expect(Set(scales).count == scales.count)
+  @Test func sizesOutsideTheRangeClamp() {
+    #expect(ChromeTextSize(points: 4).points == 10)
+    #expect(ChromeTextSize(points: 40).points == 24)
   }
 
-  @Test func casesAreOrderedSmallestFirst() {
-    // `allCases` is the order the picker renders, so reordering the cases
-    // reorders the control.
-    #expect(ChromeTextSize.allCases == [.standard, .large, .extraLarge])
-    #expect(ChromeTextSize.allCases.first == .default)
+  @Test func casesCoverTheRangeSmallestFirst() {
+    // `allCases` is the order the picker renders.
+    #expect(ChromeTextSize.allCases.map(\.points) == Array(10...24))
+    #expect(ChromeTextSize.allCases.contains(.default))
   }
 
-  @Test func rawValuesAreStableAcrossReleases() {
-    // The raw values are the on-disk representation in the settings file;
-    // renaming one silently resets a user's chosen size back to the default.
-    #expect(ChromeTextSize.standard.rawValue == "standard")
-    #expect(ChromeTextSize.large.rawValue == "large")
-    #expect(ChromeTextSize.extraLarge.rawValue == "extraLarge")
+  @Test func encodesThePointSize() throws {
+    let data = try JSONEncoder().encode(ChromeTextSize(points: 16))
+    #expect(String(bytes: data, encoding: .utf8) == "16")
+  }
+
+  @Test func decodesClampedPointSizes() throws {
+    let points = try ["16", "99"].map {
+      try JSONDecoder().decode(ChromeTextSize.self, from: Data($0.utf8)).points
+    }
+    #expect(points == [16, 24])
+  }
+
+  @Test func decodesLegacyNamesAsTheBodySizeTheyRendered() throws {
+    // Settings files from before sizes were points saved a name.
+    let points = try [#""standard""#, #""large""#, #""extraLarge""#].map {
+      try JSONDecoder().decode(ChromeTextSize.self, from: Data($0.utf8)).points
+    }
+    #expect(points == [13, 15, 17])
+  }
+
+  @Test func rejectsUnknownNames() {
+    #expect(throws: DecodingError.self) {
+      try JSONDecoder().decode(ChromeTextSize.self, from: Data(#""gigantic""#.utf8))
+    }
   }
 }
 
 /// The font-resolution core behind `appFont` / `appFontInheriting`. Extracted
 /// from the view modifiers so the size math is testable without a view host.
 struct AppFontMetricsTests {
-  @Test func standardResolvesToTheExactSemanticFont() {
+  @Test func defaultResolvesToTheExactSemanticFont() {
     // The Default path must leave text byte-identical to `.font(...)`, so no
     // scaled point size is substituted.
-    #expect(AppFontMetrics.resolvedFont(for: .body, size: .standard, weight: nil, monospaced: false) == .system(.body))
+    #expect(AppFontMetrics.resolvedFont(for: .body, size: .default, weight: nil, monospaced: false) == .system(.body))
     #expect(
-      AppFontMetrics.resolvedFont(for: .body, size: .standard, weight: .semibold, monospaced: false)
+      AppFontMetrics.resolvedFont(for: .body, size: .default, weight: .semibold, monospaced: false)
         == .system(.body).weight(.semibold)
     )
     #expect(
-      AppFontMetrics.resolvedFont(for: .body, size: .standard, weight: nil, monospaced: true)
+      AppFontMetrics.resolvedFont(for: .body, size: .default, weight: nil, monospaced: true)
         == .system(.body).monospaced()
     )
   }
 
   @Test func scaledPathRoundsAndKeepsTheStyleDefaultWeight() {
-    let size = AppFontMetrics.scaledPointSize(for: .body, size: .large)
+    let size = AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 15))
     #expect(size == size.rounded())
     #expect(
-      AppFontMetrics.resolvedFont(for: .body, size: .large, weight: nil, monospaced: false)
+      AppFontMetrics.resolvedFont(for: .body, size: ChromeTextSize(points: 15), weight: nil, monospaced: false)
         == .system(size: size).weight(.regular)
     )
   }
@@ -60,9 +76,9 @@ struct AppFontMetricsTests {
   @Test func headlineKeepsSemiboldWhenScaled() {
     // `.headline` is the one macOS style that isn't regular; the scaled path
     // re-applies the weight explicitly, so it must preserve it.
-    let size = AppFontMetrics.scaledPointSize(for: .headline, size: .extraLarge)
+    let size = AppFontMetrics.scaledPointSize(for: .headline, size: ChromeTextSize(points: 17))
     #expect(
-      AppFontMetrics.resolvedFont(for: .headline, size: .extraLarge, weight: nil, monospaced: false)
+      AppFontMetrics.resolvedFont(for: .headline, size: ChromeTextSize(points: 17), weight: nil, monospaced: false)
         == .system(size: size).weight(.semibold)
     )
     #expect(AppFontMetrics.defaultWeight(for: .headline) == .semibold)
@@ -70,16 +86,21 @@ struct AppFontMetricsTests {
   }
 
   @Test func scaledPointSizeGrowsWithTheSize() {
-    let standard = AppFontMetrics.scaledPointSize(for: .body, size: .standard)
-    let large = AppFontMetrics.scaledPointSize(for: .body, size: .large)
-    let extraLarge = AppFontMetrics.scaledPointSize(for: .body, size: .extraLarge)
+    let standard = AppFontMetrics.scaledPointSize(for: .body, size: .default)
+    let large = AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 15))
+    let extraLarge = AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 17))
     #expect(standard <= large)
     #expect(large <= extraLarge)
     #expect(standard < extraLarge)
   }
 
+  @Test func bodyTextLandsOnThePointSize() {
+    #expect(AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 10)) == 10)
+    #expect(AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 24)) == 24)
+  }
+
   @Test func inheritedFontIsAbsentAtDefaultAndPresentAbove() {
-    #expect(AppFontMetrics.inheritedFont(for: .subheadline, size: .standard, weight: nil) == nil)
-    #expect(AppFontMetrics.inheritedFont(for: .subheadline, size: .large, weight: .semibold) != nil)
+    #expect(AppFontMetrics.inheritedFont(for: .subheadline, size: .default, weight: nil) == nil)
+    #expect(AppFontMetrics.inheritedFont(for: .subheadline, size: ChromeTextSize(points: 15), weight: .semibold) != nil)
   }
 }
