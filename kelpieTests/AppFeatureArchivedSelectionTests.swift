@@ -335,6 +335,145 @@ struct AppFeatureArchivedSelectionTests {
     #expect(sentCommands.value == [.setImagePasteAgents(surfaceID: surfaceID, agents: [.claude])])
   }
 
+  @Test(.dependencies) func projectionDroppingAgentSurfaceClearsBadgeBeforeSurfaceClose() async {
+    let rootURL = URL(fileURLWithPath: "/tmp/repo")
+    let worktree = Worktree(
+      id: "/tmp/repo/wt-feature",
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-feature"),
+      repositoryRootURL: rootURL
+    )
+    let repository = Repository(
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
+      rootURL: rootURL,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [worktree])
+    )
+    let agentSurfaceID = UUID()
+    let shellSurfaceID = UUID()
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    repositoriesState.sidebarItems[id: worktree.id]?.surfaceIDs = [agentSurfaceID, shellSurfaceID]
+    repositoriesState.sidebarItems[id: worktree.id]?.agentSnapshot.agents = [
+      AgentPresenceFeature.AgentInstance(agent: .claude, activity: .idle)
+    ]
+    var appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    appState.agentPresence.bySurface[agentSurfaceID] = [.claude]
+    appState.agentPresence.records[
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: agentSurfaceID)
+    ] = AgentPresenceFeature.PresenceRecord(activity: .idle, pids: [42])
+    let clock = TestClock()
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = clock
+      $0.terminalClient.send = { _ in }
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+    }
+    store.exhaustivity = .off
+
+    // Tab-close race: the shrunk projection lands before `surfacesClosed`.
+    await store.send(
+      .terminalEvent(
+        .worktreeProjectionChanged(
+          worktree.id,
+          WorktreeRowProjection(
+            surfaceIDs: [shellSurfaceID],
+            isProgressBusy: false,
+            hasUnseenNotifications: false,
+            notifications: []
+          )
+        )
+      )
+    )
+    await store.receive(\.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged) {
+      $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot.agents = []
+    }
+    await store.send(.terminalEvent(.surfacesClosed(worktreeID: worktree.id, [agentSurfaceID])))
+    await store.receive(\.agentPresence.surfaceClosed)
+    await store.receive(\.agentPresence.delegate)
+    await clock.advance(by: .seconds(1))
+    await store.finish()
+
+    #expect(store.state.repositories.sidebarItems[id: worktree.id]?.agents == [])
+    let activeRowIDs = store.state.repositories.sidebarStructure.sections.flatMap {
+      section -> [Worktree.ID] in
+      if case .highlight(let kind, let rowIDs) = section, kind == .active { return rowIDs }
+      return []
+    }
+    #expect(!activeRowIDs.contains(worktree.id))
+  }
+
+  @Test(.dependencies) func projectionDroppingAgentSurfaceKeepsSurvivingAgentBadge() async {
+    let rootURL = URL(fileURLWithPath: "/tmp/repo")
+    let worktree = Worktree(
+      id: "/tmp/repo/wt-feature",
+      name: "feature",
+      detail: "",
+      workingDirectory: URL(fileURLWithPath: "/tmp/repo/wt-feature"),
+      repositoryRootURL: rootURL
+    )
+    let repository = Repository(
+      id: RepositoryID(rootURL.path(percentEncoded: false)),
+      rootURL: rootURL,
+      name: "repo",
+      worktrees: IdentifiedArray(uniqueElements: [worktree])
+    )
+    let closedSurfaceID = UUID()
+    let survivingSurfaceID = UUID()
+    let codex = AgentPresenceFeature.AgentInstance(agent: .codex, activity: .busy)
+    var repositoriesState = RepositoriesFeature.State(reconciledRepositories: [repository])
+    repositoriesState.sidebarItems[id: worktree.id]?.surfaceIDs = [closedSurfaceID, survivingSurfaceID]
+    repositoriesState.sidebarItems[id: worktree.id]?.agentSnapshot = AgentPresenceFeature.RowSnapshot(
+      agents: [AgentPresenceFeature.AgentInstance(agent: .claude, activity: .busy), codex],
+      isWorking: true
+    )
+    var appState = AppFeature.State(
+      repositories: repositoriesState,
+      settings: SettingsFeature.State()
+    )
+    appState.agentPresence.bySurface = [closedSurfaceID: [.claude], survivingSurfaceID: [.codex]]
+    appState.agentPresence.records = [
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: closedSurfaceID):
+        AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [42]),
+      AgentPresenceFeature.PresenceKey(agent: .codex, surfaceID: survivingSurfaceID):
+        AgentPresenceFeature.PresenceRecord(activity: .busy, pids: [43]),
+    ]
+
+    let store = TestStore(initialState: appState) {
+      AppFeature()
+    } withDependencies: {
+      $0.continuousClock = TestClock()
+      $0.terminalClient.send = { _ in }
+      $0.terminalClient.saveLayoutsWithAgents = { _ in }
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .terminalEvent(
+        .worktreeProjectionChanged(
+          worktree.id,
+          WorktreeRowProjection(
+            surfaceIDs: [survivingSurfaceID],
+            isProgressBusy: false,
+            hasUnseenNotifications: false,
+            notifications: []
+          )
+        )
+      )
+    )
+    await store.receive(\.repositories.sidebarItems[id: worktree.id].agentSnapshotChanged) {
+      $0.repositories.sidebarItems[id: worktree.id]?.agentSnapshot = AgentPresenceFeature.RowSnapshot(
+        agents: [codex],
+        isWorking: true
+      )
+    }
+  }
+
   @Test(.dependencies) func agentPresenceDeltaPersistsLayoutsAfterDebounceWindow() async {
     let surfaceID = UUID()
     var appState = AppFeature.State(

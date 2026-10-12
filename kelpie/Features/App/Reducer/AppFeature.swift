@@ -2120,12 +2120,31 @@ struct AppFeature {
           addedSurfaces.isEmpty && pendingProjectedSurfaces.isEmpty || state.agentPresence.bySurface.isEmpty
           ? []
           : addedSurfaces.union(pendingProjectedSurfaces).filter { state.agentPresence.bySurface[$0] != nil }
-        let projectionEffect: Effect<Action> = .send(
-          .repositories(
-            .sidebarItems(
-              .element(id: worktreeID, action: .terminalProjectionChanged(projection))
-            )
+        // A dropped surface takes its agents with it. The presence fan-out finds
+        // rows by surface, so a `surfacesClosed` landing after this projection
+        // can no longer reach the row and would strand the closed tab's badge.
+        let droppedSurfaces = Set(row.surfaceIDs).subtracting(projectedSurfaces)
+        let dropsAgentSurface = droppedSurfaces.contains { state.agentPresence.bySurface[$0] != nil }
+        var droppedAgentsEffect: Effect<Action> = .none
+        if dropsAgentSurface {
+          @Shared(.settingsFile) var settingsFile: SettingsFile
+          let snapshot = state.agentPresence.rowSnapshot(
+            across: projection.surfaceIDs,
+            badgesEnabled: settingsFile.global.agentPresenceBadgesEnabled
           )
+          droppedAgentsEffect = .send(
+            .repositories(.sidebarItems(.element(id: worktreeID, action: .agentSnapshotChanged(snapshot))))
+          )
+        }
+        let projectionEffect: Effect<Action> = .concatenate(
+          .send(
+            .repositories(
+              .sidebarItems(
+                .element(id: worktreeID, action: .terminalProjectionChanged(projection))
+              )
+            )
+          ),
+          droppedAgentsEffect
         )
         // Backstop the `.tabCreated` one-shot: a surface-bearing projection
         // re-resolves the worktree-new ack and settles progress if that event
