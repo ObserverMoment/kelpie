@@ -19,7 +19,8 @@ struct AppFeatureMailboxTests {
   }
 
   private static func makeStore(
-    worktree: Worktree, others: [Worktree] = [], layouts: IdentifiedArrayOf<LayoutFeature.State> = []
+    worktree: Worktree, others: [Worktree] = [], layouts: IdentifiedArrayOf<LayoutFeature.State> = [],
+    speak: @escaping @MainActor @Sendable (String) async -> Void = { _ in }
   ) -> TestStoreOf<AppFeature> {
     var repositories = RepositoriesFeature.State(reconciledRepositories: [
       Repository(
@@ -37,6 +38,7 @@ struct AppFeatureMailboxTests {
       $0.continuousClock = TestClock()
       $0.uuid = .incrementing
       $0.date.now = Date(timeIntervalSince1970: 1_700_000_000)
+      $0[SpeechClient.self] = SpeechClient(speak: speak)
     }
     store.exhaustivity = .off
     return store
@@ -156,6 +158,21 @@ struct AppFeatureMailboxTests {
     #expect(store.state.mailbox.viewerReturnsToPane)
   }
 
+  @Test(.dependencies) func readAloudReadsTheFocusedPanesNewestMessage() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let spoken = LockIsolated<[String]>([])
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      speak: { text in spoken.withValue { $0.append(text) } })
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+
+    await store.send(.readLastAgentMessageAloud(surfaceID: nil))
+    await store.receive(\.mailbox.readAloudToggled)
+    await store.receive(\.mailbox.readAloudFinished)
+    #expect(spoken.value == ["hi"])
+  }
+
   @Test(.dependencies) func lastMessageRequestIsANoOpWithoutMail() async {
     let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
     let store = Self.makeStore(
@@ -223,7 +240,8 @@ struct AppFeatureMailboxTests {
     await store.send(.showLastAgentMessage(surfaceID: nil))
     await store.receive(\.mailbox.lastMessageOpened)
 
-    await store.send(.fleetView(.dismiss))
+    await store.send(.overlayEscapePressed)
+    await store.receive(\.fleetView.dismiss)
     await store.receive(\.fleetView.delegate.dismissed)
     await store.receive(\.mailbox.overlayDismissed)
     await store.receive(\.mailbox.delegate.closedToPane)
@@ -459,7 +477,7 @@ struct AppFeatureMailboxTests {
     await store.send(.terminals(.layouts(.element(id: worktree.id, action: .wakeTab(id: tabID)))))
     #expect(rebuilt.terminalChrome.hasMail)
     // The test content has no builder wiring, so no dead button shows.
-    #expect(rebuilt.terminalChrome.stripAction == nil)
+    #expect(rebuilt.terminalChrome.stripActions.isEmpty)
     #expect(rebuilt.terminalChrome.unreadMail == 1)
 
     let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
@@ -479,5 +497,68 @@ struct AppFeatureMailboxTests {
     await store.send(.terminalEvent(.surfacesClosed(worktreeID: worktree.id, [surfaceID])))
     await store.receive(\.mailbox.surfacesClosed)
     #expect(store.state.mailbox.file.boxes.isEmpty)
+  }
+}
+
+extension AppFeatureMailboxTests {
+  @Test(.dependencies) func arrowKeysWalkTheSessionsThenTheInboxInMailboxMode() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let store = Self.makeStore(worktree: worktree)
+    await Self.deliver(store, worktree: worktree, surfaceID: UUID(), "a")
+    await Self.deliver(store, worktree: worktree, surfaceID: UUID(), "b")
+    await store.send(.fleetView(.toggleMailbox))
+    let rows = store.state.mailbox.structure.rows.map(\.id)
+    #expect(rows.count == 2)
+
+    await store.send(.fleetView(.moveFocus(.up)))
+    await store.receive(\.mailbox.moveFocus)
+    #expect(store.state.mailbox.selectedSurfaceID == rows[0])
+    await store.send(.fleetView(.moveFocus(.down)))
+    await store.receive(\.mailbox.moveFocus)
+    #expect(store.state.mailbox.selectedSurfaceID == rows[1])
+
+    let message = store.state.mailbox.file.boxes[id: rows[1]]!.messages[0].id
+    await store.send(.fleetView(.moveFocus(.right)))
+    await store.receive(\.mailbox.moveFocus)
+    #expect(store.state.mailbox.focusedMessageID == message)
+    await store.send(.fleetView(.activateFocusedCard))
+    await store.receive(\.mailbox.activateFocused)
+    #expect(store.state.mailbox.openMessageID == message)
+    #expect(store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func escapeStepsBackFromAnInboxMessageThenCloses() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let store = Self.makeStore(worktree: worktree)
+    let surfaceID = UUID()
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.fleetView(.toggleMailbox))
+    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    await store.send(.mailbox(.messageOpened(id)))
+
+    await store.send(.overlayEscapePressed)
+    await store.receive(\.mailbox.viewerClosed)
+    #expect(store.state.fleetView.isPresented)
+    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(store.state.mailbox.focusedMessageID == id)
+
+    await store.send(.overlayEscapePressed)
+    await store.receive(\.fleetView.dismiss)
+    #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func escapeInFleetModeClosesTheOverlayDespiteAnOpenInboxMessage() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let store = Self.makeStore(worktree: worktree)
+    let surfaceID = UUID()
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.mailbox(.messageOpened(store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id)))
+    await store.send(.fleetView(.toggle))
+    #expect(store.state.fleetView.mode == .fleet)
+
+    await store.send(.overlayEscapePressed)
+    await store.receive(\.fleetView.dismiss)
+    #expect(!store.state.fleetView.isPresented)
   }
 }

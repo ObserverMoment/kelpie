@@ -1,9 +1,9 @@
 import AppKit
 import ComposableArchitecture
-import OrderedCollections
-import Sharing
 import KelpieSettingsFeature
 import KelpieSettingsShared
+import OrderedCollections
+import Sharing
 import SwiftUI
 
 #if DEBUG
@@ -362,6 +362,7 @@ struct WorktreeDetailView: View {
     let isPodWorkspace = state.fleetView.isShowingPodWorkspace
     let actsOnLayout = hasActiveWorktree && !isPodWorkspace
     let focusedSurfaceHasMail = state.focusedSurfaceHasMail
+    let isReadingAloud = state.mailbox.isReadingAloud
     return
       content
       // Open is enabled only when the resolved editor can open the selection
@@ -394,6 +395,12 @@ struct WorktreeDetailView: View {
       }
       .focusedAction(\.showLastAgentMessageAction, enabled: actsOnLayout && focusedSurfaceHasMail) {
         store.send(.showLastAgentMessage(surfaceID: nil))
+      }
+      // Stopping works from any pane, mail or not.
+      .focusedAction(
+        \.readLastAgentMessageAloudAction, enabled: actsOnLayout && (focusedSurfaceHasMail || isReadingAloud)
+      ) {
+        store.send(.readLastAgentMessageAloud(surfaceID: nil))
       }
       .focusedAction(\.equalizeSplitsAction, enabled: actsOnLayout) {
         store.send(.equalizeSplits)

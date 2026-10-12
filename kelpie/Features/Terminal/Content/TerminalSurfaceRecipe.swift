@@ -1,7 +1,7 @@
 import Foundation
 import GhosttyKit
-import Sharing
 import KelpieSettingsShared
+import Sharing
 
 /// Launch command and environment for a terminal surface, shared by the
 /// legacy per-tab path and the layout content factory.
@@ -299,6 +299,8 @@ struct TerminalContentBuilder {
   /// Opens a content's newest Mailbox message, behind its strip button. No
   /// silent default: an unwired chrome would show a dead button.
   var showLastMessage: (ContentID) -> Void
+  /// Reads a content's newest Mailbox message aloud, behind its strip button.
+  var readLastMessageAloud: (ContentID) -> Void
 
   func factory() -> LayoutContentFactory {
     LayoutContentFactory { request in
@@ -379,6 +381,8 @@ struct TerminalContentBuilder {
     )
     let showLastMessage = showLastMessage
     content.terminalChrome.showLastMessage = { showLastMessage(request.contentID) }
+    let readLastMessageAloud = readLastMessageAloud
+    content.terminalChrome.readLastMessageAloud = { readLastMessageAloud(request.contentID) }
     return content
   }
 }

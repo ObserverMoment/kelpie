@@ -209,6 +209,10 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.conflictWarnings(from: [:])[.showLastAgentMessage] == nil)
   }
 
+  @Test func readLastAgentMessageAloudShortcutHasNoDefaultConflict() {
+    #expect(AppShortcuts.conflictWarnings(from: [:])[.readLastAgentMessageAloud] == nil)
+  }
+
   @Test func toggleWindowModeShortcutHasNoDefaultConflict() {
     #expect(AppShortcuts.conflictWarnings(from: [:])[.toggleWindowMode] == nil)
   }
@@ -608,6 +612,15 @@ struct PaneWindowShortcutTests {
   @Test func lastAgentMessageIsConsumedInAPaneWindow() {
     let pane = Self.pane(tabs: [Self.tab()])
     let event = Self.keyEvent(keyCode: kVK_ANSI_I, modifiers: [.command, .control])
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .ignore
+    )
+  }
+
+  @Test func readAloudIsConsumedInAPaneWindow() {
+    let pane = Self.pane(tabs: [Self.tab()])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_R, modifiers: [.command, .control])
     #expect(
       PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
         == .ignore

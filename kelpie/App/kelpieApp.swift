@@ -10,10 +10,10 @@ import ComposableArchitecture
 import Foundation
 import GhosttyKit
 import IdentifiedCollections
-import OrderedCollections
-import Sharing
 import KelpieSettingsFeature
 import KelpieSettingsShared
+import OrderedCollections
+import Sharing
 import SwiftUI
 
 private enum GhosttyCLI {
@@ -397,6 +397,9 @@ struct KelpieApp: App {
       },
       showLastMessage: { [weak terminalManager] contentID in
         terminalManager?.appStore?.send(.showLastAgentMessage(surfaceID: contentID.rawValue))
+      },
+      readLastMessageAloud: { [weak terminalManager] contentID in
+        terminalManager?.appStore?.send(.readLastAgentMessageAloud(surfaceID: contentID.rawValue))
       }
     ).factory()
   }

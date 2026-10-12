@@ -9,8 +9,8 @@ extension AppFeature.Action {
     switch self {
     case .repositories(let inner):
       return !inner.cacheInvalidations.isEmpty
-    // Moving the Pods cursor reads the structure and changes none of its inputs.
-    case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember):
+    // Moving the Pods or Mailbox cursor reads the structure and changes none of its inputs.
+    case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember), .mailbox(.moveFocus):
       return false
     // Pods add the pod-name caption and feed Pods mode, which the same pass computes.
     case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleMailbox), .pods,
@@ -27,12 +27,12 @@ extension AppFeature.Action {
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
       .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom, .showLastAgentMessage,
-      .equalizeSplits, .focusSplit, .jumpToLatestUnread,
+      .readLastAgentMessageAloud, .equalizeSplits, .focusSplit, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .navigate, .sidebarVisibilityChanged,
+      .navigateSearchPrevious, .navigate, .overlayEscapePressed, .sidebarVisibilityChanged,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
       .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,

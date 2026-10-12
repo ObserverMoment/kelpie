@@ -118,7 +118,7 @@ struct FleetView: View {
     }
   }
 
-  private var mailboxSummary: String {
+  private var mailboxSummary: LocalizedStringKey {
     let unread = mailboxStore.unreadCount
     return unread == 0 ? "No unread messages" : "^[\(unread) unread message](inflect: true)"
   }

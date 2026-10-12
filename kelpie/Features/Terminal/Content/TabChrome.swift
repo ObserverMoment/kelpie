@@ -22,12 +22,12 @@ protocol TabChrome: AnyObject {
   /// second, so it lives here rather than as a layout reducer action, and only
   /// one tab's label re-renders on a report.
   var reportedTitle: String? { get }
-  /// A button the content adds to its pane's strip while its tab is selected.
-  var stripAction: TabStripAction? { get }
+  /// Buttons the content adds to its pane's strip while its tab is selected.
+  var stripActions: [TabStripAction] { get }
 }
 
 extension TabChrome {
-  var stripAction: TabStripAction? { nil }
+  var stripActions: [TabStripAction] { [] }
 }
 
 /// A content-provided strip button; the strip renders it with the shortcut in
@@ -81,12 +81,24 @@ final class TerminalTabChrome: TabChrome {
   var hasMail = false
   /// Opens the pane's newest message; installed when the content is built.
   @ObservationIgnored var showLastMessage: (() -> Void)?
+  /// Reads the pane's newest message aloud, or stops; installed with
+  /// `showLastMessage`.
+  @ObservationIgnored var readLastMessageAloud: (() -> Void)?
 
-  var stripAction: TabStripAction? {
-    guard hasMail, let showLastMessage else { return nil }
-    return TabStripAction(
-      title: "Show Last Agent Message", systemImage: "envelope.open",
-      shortcut: AppShortcuts.showLastAgentMessage, perform: showLastMessage)
+  var stripActions: [TabStripAction] {
+    guard hasMail else { return [] }
+    return [
+      showLastMessage.map {
+        TabStripAction(
+          title: "Show Last Agent Message", systemImage: "envelope.open",
+          shortcut: AppShortcuts.showLastAgentMessage, perform: $0)
+      },
+      readLastMessageAloud.map {
+        TabStripAction(
+          title: "Read Last Agent Message Aloud or Stop", systemImage: "speaker.wave.2",
+          shortcut: AppShortcuts.readLastAgentMessageAloud, perform: $0)
+      },
+    ].compactMap(\.self)
   }
 
   var accessory: AnyView? {

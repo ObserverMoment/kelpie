@@ -39,7 +39,9 @@ struct ContentView: View {
     // moves up to the traffic lights. The user's own visibility is kept for Home.
     let columnVisibility = Binding<NavigationSplitViewVisibility>(
       get: { isFleetPresented ? .detailOnly : leftSidebarVisibility },
-      set: { if !isFleetPresented { leftSidebarVisibility = $0 } }
+      // Reads the store, not `isFleetPresented`: as Fleet opens, the split view
+      // writes `.detailOnly` through the previous body's binding.
+      set: { if !store.fleetView.isPresented { leftSidebarVisibility = $0 } }
     )
     return NavigationSplitView(columnVisibility: columnVisibility) {
       SidebarView(store: repositoriesStore, terminalManager: terminalManager)
@@ -93,7 +95,7 @@ struct ContentView: View {
         switch decision {
         case .move(let direction): store.send(.fleetView(.moveFocus(direction)))
         case .activate: store.send(.fleetView(.activateFocusedCard))
-        case .dismiss: store.send(.fleetView(.dismiss))
+        case .dismiss: store.send(.overlayEscapePressed)
         case .swallow, .menuShortcut: break
         }
       }

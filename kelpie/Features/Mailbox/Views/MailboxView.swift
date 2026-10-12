@@ -66,18 +66,24 @@ struct MailboxView: View {
           )
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-          ScrollView {
-            LazyVStack(spacing: 0) {
-              ForEach(box.messages) { message in
-                MailMessageRow(message: message) {
-                  store.send(.messageOpened(message.id))
-                } onDone: {
-                  store.send(.markDone(message.id))
-                } onReply: {
-                  store.send(.replyTapped(message.id))
+          ScrollViewReader { proxy in
+            ScrollView {
+              LazyVStack(spacing: 0) {
+                ForEach(box.messages) { message in
+                  MailMessageRow(message: message, isFocused: message.id == store.focusedMessageID) {
+                    store.send(.messageOpened(message.id))
+                  } onDone: {
+                    store.send(.markDone(message.id))
+                  } onReply: {
+                    store.send(.replyTapped(message.id))
+                  }
+                  .id(message.id)
+                  Divider()
                 }
-                Divider()
               }
+            }
+            .onChange(of: store.focusedMessageID, initial: true) { _, focused in
+              if let focused { proxy.scrollTo(focused) }
             }
           }
         }
@@ -155,6 +161,8 @@ private struct MailboxSessionRow: View {
 
 private struct MailMessageRow: View {
   let message: MailMessage
+  /// The arrow keys are on this row.
+  let isFocused: Bool
   let onOpen: () -> Void
   let onDone: () -> Void
   let onReply: () -> Void
@@ -188,7 +196,7 @@ private struct MailMessageRow: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .help("Open this message")
+      .help("Open this message (Return)")
       .accessibilityIdentifier("mailMessageOpen")
       HStack(spacing: 4) {
         Button("Done", systemImage: "checkmark", action: onDone)
@@ -201,6 +209,10 @@ private struct MailMessageRow: View {
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 12)
+    .overlay {
+      if isFocused { Rectangle().strokeBorder(Color.accentColor, lineWidth: 2) }
+    }
+    .accessibilityAddTraits(isFocused ? .isSelected : [])
   }
 }
 

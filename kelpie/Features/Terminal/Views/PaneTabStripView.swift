@@ -878,13 +878,15 @@ private struct PaneTabStripAccessories: View {
       }
       // Content actions may open main-window UI a pane window cannot show, so
       // a windowed pane offers none, as it offers no splits or zoom.
-      if !isWindowed, let stripAction {
-        PaneTabStripAccessoryButton(
-          title: stripAction.title,
-          systemImage: stripAction.systemImage,
-          shortcut: stripAction.shortcut,
-          action: stripAction.perform
-        )
+      if !isWindowed {
+        ForEach(stripActions, id: \.title) { stripAction in
+          PaneTabStripAccessoryButton(
+            title: stripAction.title,
+            systemImage: stripAction.systemImage,
+            shortcut: stripAction.shortcut,
+            action: stripAction.perform
+          )
+        }
       }
       PaneTabStripNewTabControl(
         canSplit: !isWindowed && selectedLiveContentID != nil,
@@ -906,8 +908,8 @@ private struct PaneTabStripAccessories: View {
     !isWindowed && store.layout.tree.isSplit
   }
 
-  private var stripAction: TabStripAction? {
-    pane.selectedTab.flatMap { runtime.content(for: $0.content.id)?.chrome?.stripAction }
+  private var stripActions: [TabStripAction] {
+    pane.selectedTab.flatMap { runtime.content(for: $0.content.id)?.chrome?.stripActions } ?? []
   }
 
   private var selectedLiveContentID: ContentID? {

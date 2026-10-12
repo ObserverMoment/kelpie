@@ -318,6 +318,9 @@ struct AppFeature {
     case mailbox(MailboxFeature.Action)
     /// ⌃⌘ + arrow: moves the keyboard cursor in whichever view is showing.
     case navigate(FleetViewNavigation.Direction)
+    /// Escape while the overlay is up: a message opened from the inbox steps
+    /// back to the inbox; anything else closes the overlay.
+    case overlayEscapePressed
     /// The sidebar column was shown or hidden; `ContentView` owns the visibility.
     case sidebarVisibilityChanged(Bool)
     case openActionSelectionChanged(OpenWorktreeAction)
@@ -350,6 +353,9 @@ struct AppFeature {
     /// Opens a pane's newest Mailbox message full-window; `nil` means the
     /// focused pane. No-op when the pane has no mail.
     case showLastAgentMessage(surfaceID: UUID?)
+    /// Reads a pane's newest Mailbox message aloud, or stops the reading;
+    /// `nil` means the focused pane.
+    case readLastAgentMessageAloud(surfaceID: UUID?)
     case focusSplit(TerminalSplitMenuDirection)
     case selectTerminalTabAtIndex(Int)
     case selectNextTerminalTab
@@ -1158,6 +1164,9 @@ struct AppFeature {
           .send(.mailbox(.lastMessageOpened(surfaceID: surfaceID)))
         )
 
+      case .readLastAgentMessageAloud(let surfaceID):
+        return .send(.mailbox(.readAloudToggled(surfaceID: surfaceID ?? state.focusedSurfaceID)))
+
       case .toggleSplitZoom:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
           !worktree.isMissing
@@ -1786,6 +1795,19 @@ struct AppFeature {
 
       case .fleetView(.activateFocusedCard) where state.fleetView.mode == .pods:
         return .send(.pods(.activateFocusedMember))
+
+      // Mailbox mode walks its sessions and messages the same way.
+      case .fleetView(.moveFocus(let direction)) where state.fleetView.mode == .mailbox:
+        return .send(.mailbox(.moveFocus(direction)))
+
+      case .fleetView(.activateFocusedCard) where state.fleetView.mode == .mailbox:
+        return .send(.mailbox(.activateFocused))
+
+      case .overlayEscapePressed:
+        if state.fleetView.mode == .mailbox, state.mailbox.viewerReturnsToInbox {
+          return .send(.mailbox(.viewerClosed))
+        }
+        return .send(.fleetView(.dismiss))
 
       case .fleetView:
         return .none

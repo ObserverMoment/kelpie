@@ -15,12 +15,16 @@ struct MailboxFeature {
     var selectedSurfaceID: UUID?
     /// The message shown full-window, if any.
     var openMessageID: MailMessage.ID?
+    /// The message the arrow keys are on; `nil` while they are on the session list.
+    var focusedMessageID: MailMessage.ID?
     /// The message last opened from its pane rather than the inbox. Closing
     /// it leaves the overlay for that pane instead of going back to the inbox.
     var paneOpenedMessageID: MailMessage.ID?
     /// Surfaces whose tab chrome last carried an unread-mail badge, so a box
     /// that empties or closes gets its badge cleared.
     var badgedSurfaceIDs: Set<UUID> = []
+    /// A message is being read aloud; the next Read Aloud press stops it.
+    var isReadingAloud = false
 
     var unreadCount: Int { file.unreadCount }
 
@@ -38,6 +42,16 @@ struct MailboxFeature {
     /// Closing the open message goes back to its pane, not the inbox.
     var viewerReturnsToPane: Bool { openMessageID != nil && openMessageID == paneOpenedMessageID }
 
+    /// Closing the open message goes back to the inbox.
+    var viewerReturnsToInbox: Bool { openMessageID != nil && !viewerReturnsToPane }
+
+    /// Messages left the selected box: the arrow keys move to the nearest
+    /// survivor, or back to the session list once the box is empty.
+    mutating func reconcileFocusedMessage(previous: [MailMessage.ID]) {
+      focusedMessageID = FleetViewNavigation.reconcile(
+        focused: focusedMessageID, previous: previous, current: selectedBox?.messages.map(\.id) ?? [])
+    }
+
     /// The overlay left for another session or a launch: a viewer opened from
     /// a pane must not reappear, pointing at that pane, on the next open.
     mutating func dropPaneViewer() {
@@ -54,18 +68,29 @@ struct MailboxFeature {
       if let selected = selectedSurfaceID, next.rows.contains(where: { $0.id == selected }) { return }
       selectedSurfaceID = next.rows.first?.id
       openMessageID = nil
+      focusedMessageID = nil
     }
   }
 
   enum Action: Equatable {
     case received(surfaceID: UUID, worktreeID: Worktree.ID, agent: SkillAgent, body: String)
     case sessionSelected(UUID?)
+    /// Arrow keys: ↑/↓ walk the session list, or the selected session's messages
+    /// once → has moved into them; ← goes back to the list. Ignored while a
+    /// message is open.
+    case moveFocus(FleetViewNavigation.Direction)
+    /// Return: opens the focused message, or moves into the session's messages.
+    case activateFocused
     /// Shows the message full-window and marks it read.
     case messageOpened(MailMessage.ID)
     /// Opens a pane's newest message, closing back to that pane. No-op when
     /// the pane has no mail.
     case lastMessageOpened(surfaceID: UUID)
     case viewerClosed
+    /// Stops the reading, from any pane, or reads the pane's newest message
+    /// aloud. No-op when nothing is reading and the pane has no mail.
+    case readAloudToggled(surfaceID: UUID?)
+    case readAloudFinished
     /// The overlay closed: a viewer opened from a pane closes with it, so the
     /// inbox shows next time.
     case overlayDismissed
@@ -89,8 +114,11 @@ struct MailboxFeature {
     case closedToPane(worktreeID: Worktree.ID, surfaceID: UUID)
   }
 
+  private nonisolated enum CancelID: Hashable, Sendable { case readAloud }
+
   @Dependency(\.uuid) private var uuid
   @Dependency(\.date.now) private var now
+  @Dependency(SpeechClient.self) private var speechClient
 
   var body: some Reducer<State, Action> {
     Reduce { state, action in
@@ -110,6 +138,35 @@ struct MailboxFeature {
         guard surfaceID != state.selectedSurfaceID else { return .none }
         state.selectedSurfaceID = surfaceID
         state.openMessageID = nil
+        state.focusedMessageID = nil
+        return .none
+
+      case .moveFocus(let direction):
+        guard state.openMessageID == nil else { return .none }
+        let messageIDs = state.selectedBox?.messages.map(\.id) ?? []
+        switch direction {
+        case .left:
+          state.focusedMessageID = nil
+        case .right:
+          state.focusedMessageID = state.focusedMessageID ?? messageIDs.first
+        case .up, .down:
+          if let focused = state.focusedMessageID {
+            state.focusedMessageID = FleetViewNavigation.move(
+              from: focused, direction, sections: [messageIDs], columnCount: 1)
+          } else {
+            state.selectedSurfaceID = FleetViewNavigation.move(
+              from: state.selectedSurfaceID, direction, sections: [state.structure.rows.map(\.id)], columnCount: 1)
+          }
+        }
+        return .none
+
+      case .activateFocused:
+        guard state.openMessageID == nil else { return .none }
+        if let focused = state.focusedMessageID, let surfaceID = state.selectedSurfaceID {
+          Self.open(focused, surfaceID: surfaceID, fromPane: false, state: &state)
+        } else {
+          state.focusedMessageID = state.selectedBox?.messages.first?.id
+        }
         return .none
 
       case .messageOpened(let messageID):
@@ -125,13 +182,33 @@ struct MailboxFeature {
       case .viewerClosed:
         return Self.closeViewer(state: &state)
 
+      case .readAloudToggled(let surfaceID):
+        if state.isReadingAloud {
+          state.isReadingAloud = false
+          return .cancel(id: CancelID.readAloud)
+        }
+        guard let body = surfaceID.flatMap({ state.file.boxes[id: $0]?.latestBody }) else { return .none }
+        state.isReadingAloud = true
+        let text = SpeakableText.plainText(fromMarkdown: body)
+        return .run { [speechClient] send in
+          await speechClient.speak(text)
+          await send(.readAloudFinished)
+        }
+        .cancellable(id: CancelID.readAloud)
+
+      case .readAloudFinished:
+        state.isReadingAloud = false
+        return .none
+
       case .overlayDismissed:
         guard state.viewerReturnsToPane else { return .none }
         return Self.closeViewer(state: &state)
 
       case .markDone(let messageID):
         let effect = state.openMessageID == messageID ? Self.closeViewer(state: &state) : .none
+        let previous = state.selectedBox?.messages.map(\.id) ?? []
         state.$file.withLock { $0.remove(messageID) }
+        state.reconcileFocusedMessage(previous: previous)
         return effect
 
       case .replyTapped(let messageID):
@@ -156,7 +233,9 @@ struct MailboxFeature {
         if let open = state.openMessageID, box.messages.contains(where: { $0.id == open && $0.isReplying }) {
           state.openMessageID = nil
         }
+        let previous = state.selectedBox?.messages.map(\.id) ?? []
         state.$file.withLock { $0.boxes[id: surfaceID]?.messages.removeAll(where: \.isReplying) }
+        state.reconcileFocusedMessage(previous: previous)
         return .none
 
       case .sessionEnded(let surfaceID), .closeStaleMailbox(let surfaceID):
@@ -177,6 +256,7 @@ struct MailboxFeature {
   ) {
     state.selectedSurfaceID = surfaceID
     state.openMessageID = messageID
+    state.focusedMessageID = messageID
     state.paneOpenedMessageID = fromPane ? messageID : nil
     state.$file.withLock { $0.update(messageID) { $0.isRead = true } }
   }
@@ -199,6 +279,7 @@ struct MailboxFeature {
     if let selected = state.selectedSurfaceID, surfaceIDs.contains(selected) {
       state.selectedSurfaceID = state.file.boxes.first?.id
       state.openMessageID = nil
+      state.focusedMessageID = nil
     }
     return .none
   }

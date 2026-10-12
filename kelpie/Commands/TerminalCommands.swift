@@ -1,6 +1,6 @@
 import ComposableArchitecture
-import Sharing
 import KelpieSettingsShared
+import Sharing
 import SwiftUI
 
 struct TerminalCommands: Commands {
@@ -12,6 +12,7 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.toggleSplitZoomAction) private var toggleSplitZoomAction
   @FocusedValue(\.equalizeSplitsAction) private var equalizeSplitsAction
   @FocusedValue(\.showLastAgentMessageAction) private var showLastAgentMessageAction
+  @FocusedValue(\.readLastAgentMessageAloudAction) private var readLastAgentMessageAloudAction
   @FocusedValue(\.focusSplitAction) private var focusSplitAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
@@ -74,6 +75,12 @@ struct TerminalCommands: Commands {
       }
       .appKeyboardShortcut(AppShortcuts.showLastAgentMessage.effective(from: overrides))
       .disabled(showLastAgentMessageAction?.isEnabled != true)
+
+      Button("Read Last Agent Message Aloud", systemImage: "speaker.wave.2") {
+        readLastAgentMessageAloudAction?()
+      }
+      .appKeyboardShortcut(AppShortcuts.readLastAgentMessageAloud.effective(from: overrides))
+      .disabled(readLastAgentMessageAloudAction?.isEnabled != true)
 
       Divider()
 
@@ -202,6 +209,10 @@ private struct ShowLastAgentMessageActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct ReadLastAgentMessageAloudActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct EqualizeSplitsActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -228,6 +239,11 @@ extension FocusedValues {
   var showLastAgentMessageAction: FocusedAction<Void>? {
     get { self[ShowLastAgentMessageActionKey.self] }
     set { self[ShowLastAgentMessageActionKey.self] = newValue }
+  }
+
+  var readLastAgentMessageAloudAction: FocusedAction<Void>? {
+    get { self[ReadLastAgentMessageAloudActionKey.self] }
+    set { self[ReadLastAgentMessageAloudActionKey.self] = newValue }
   }
 
   var equalizeSplitsAction: FocusedAction<Void>? {
