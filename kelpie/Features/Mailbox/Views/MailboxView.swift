@@ -9,6 +9,9 @@ import Textual
 struct MailboxView: View {
   @Bindable var store: StoreOf<MailboxFeature>
   let runtime: ContentRuntime
+  /// Mirrors the arrow-key column onto the list's first responder, so the
+  /// selected session dims to the unemphasized grey while the keys are on a message.
+  @FocusState private var isSessionListFocused: Bool
 
   /// The one glyph used by the header, the toolbar button and the menu item.
   static let symbolName = "envelope"
@@ -53,6 +56,14 @@ struct MailboxView: View {
         .tag(row.id)
     }
     .listStyle(.sidebar)
+    .focused($isSessionListFocused)
+    .onChange(of: store.focusedMessageID == nil, initial: true) { _, isOnSessionList in
+      isSessionListFocused = isOnSessionList
+    }
+    // A click into the list takes the keys back from the messages.
+    .onChange(of: isSessionListFocused) { _, isFocused in
+      if isFocused { store.send(.moveFocus(.left)) }
+    }
     .accessibilityIdentifier("mailboxSessionList")
   }
 
