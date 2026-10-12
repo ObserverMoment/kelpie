@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Darwin
 import Dependencies
+import DependenciesTestSupport
 import Foundation
 import KelpieSettingsShared
 import Sharing
@@ -604,6 +605,42 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.hasActivity(in: [surfaceID]) == false)
   }
 
+  @Test(.dependencies) func livenessSweepReportsASurfaceWhoseLastAgentDied() async {
+    let store = TestStore(initialState: AgentPresenceFeature.State()) { AgentPresenceFeature() }
+    store.exhaustivity = .off
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+    await store.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid)))
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    let snapshot: [AgentPresenceFeature.PresenceKey: Set<pid_t>] = [key: [deadPid]]
+
+    await store.send(
+      .livenessSweepResult(snapshot: snapshot, alive: AgentPresenceFeature.liveness(forSnapshot: snapshot)))
+    await store.receive(\.delegate.agentsExited, [surfaceID])
+  }
+
+  @Test(.dependencies) func livenessSweepKeepsASurfaceWithAnAgentStillRunning() async {
+    let store = TestStore(initialState: AgentPresenceFeature.State()) { AgentPresenceFeature() }
+    store.exhaustivity = .off
+    let surfaceID = UUID()
+    let deadPid = makeDeadPid()
+    await store.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: surfaceID, pid: deadPid)))
+    await store.send(.hookEventReceived(makeEvent(.sessionStart, agent: .codex, surfaceID: surfaceID, pid: getpid())))
+    await store.skipReceivedActions()
+    let key = AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: surfaceID)
+    let snapshot: [AgentPresenceFeature.PresenceKey: Set<pid_t>] = [key: [deadPid]]
+
+    // Exhaustive from here, so an `agentsExited` would fail as unreceived.
+    store.exhaustivity = .on
+    await store.send(
+      .livenessSweepResult(snapshot: snapshot, alive: AgentPresenceFeature.liveness(forSnapshot: snapshot))
+    ) {
+      $0.records[key] = nil
+      $0.bySurface[surfaceID] = [.codex]
+    }
+    await store.receive(\.delegate.surfacesChanged, [surfaceID])
+  }
+
   @Test func livenessSweepHonorsSessionEndDuringHop() {
     // A `.sessionEnd` for a pid that was alive at snapshot capture but landed
     // during the off-main hop must not be resurrected by the apply step.
@@ -995,6 +1032,33 @@ struct AgentPresenceFeatureTests {
     #expect(harness.state.records[key]?.pids == [livePid])
   }
 
+  @Test func restoreCheckReportsSurfacesWhoseAgentsAllDied() {
+    let dead = UUID()
+    let live = UUID()
+    let staged: [AgentPresenceFeature.PresenceKey: AgentPresenceFeature.StagedRestore] = [
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: dead):
+        AgentPresenceFeature.StagedRestore(pids: [makeDeadPid()], activity: .idle),
+      AgentPresenceFeature.PresenceKey(agent: .claude, surfaceID: live):
+        AgentPresenceFeature.StagedRestore(pids: [getpid()], activity: .idle),
+    ]
+
+    let check = AgentPresenceFeature.checkRestore(staged)
+
+    #expect(check.exitedSurfaces == [dead])
+    #expect(Set(check.records.keys.map(\.surfaceID)) == [live])
+  }
+
+  @Test(.dependencies) func restoreReportsExitedSurfacesUnlessAHookReseededThem() async {
+    let store = TestStore(initialState: AgentPresenceFeature.State()) { AgentPresenceFeature() }
+    store.exhaustivity = .off
+    let exited = UUID()
+    let reseeded = UUID()
+    await store.send(.hookEventReceived(makeEvent(.sessionStart, agent: .claude, surfaceID: reseeded, pid: getpid())))
+
+    await store.send(.restoreFromSnapshotChecked(records: [:], exitedSurfaces: [exited, reseeded]))
+    await store.receive(\.delegate.agentsExited, [exited])
+  }
+
   @Test func restoreFromLayoutsOnlyHydratesSurfacesThatExistInLayouts() {
     // Records live INSIDE layout leaves, so a since-deleted layout's records
     // are gone by construction. This test confirms the implicit filter holds.
@@ -1149,14 +1213,9 @@ struct AgentPresenceFeatureTests {
     /// sync harness does it inline so assertions run against the post-apply state.
     @MainActor mutating func restoreFromLayouts(_ layouts: [TerminalLayoutSnapshot]) {
       let staged = AgentPresenceFeature.stageRestore(fromLayouts: layouts)
-      let checked = staged.compactMapValues { stage -> AgentPresenceFeature.RestoredRecord? in
-        let alive = stage.pids.filter { AgentPresenceFeature.isAlive($0) }
-        guard !alive.isEmpty else { return nil }
-        return AgentPresenceFeature.RestoredRecord(
-          alivePids: alive, activity: stage.activity, model: stage.model, effort: stage.effort)
-      }
-      guard !checked.isEmpty else { return }
-      send(.restoreFromSnapshotChecked(records: checked))
+      guard !staged.isEmpty else { return }
+      let check = AgentPresenceFeature.checkRestore(staged)
+      send(.restoreFromSnapshotChecked(records: check.records, exitedSurfaces: check.exitedSurfaces))
     }
   }
 

@@ -514,6 +514,10 @@ struct AppFeature {
           .cancellable(id: CancelID.agentPresencePersist, cancelInFlight: true)
         )
 
+      case .agentPresence(.delegate(.agentsExited(let surfaces))):
+        // The agent is gone as surely as after a `session_end`, so its mail goes too.
+        return .merge(surfaces.map { .send(.mailbox(.sessionEnded(surfaceID: $0))) })
+
       case .agentPresence:
         return .none
 

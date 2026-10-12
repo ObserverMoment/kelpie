@@ -96,12 +96,16 @@ struct AgentPresenceFeature {
     /// Stage records for the off-main liveness pass. Apply lands as
     /// `restoreFromSnapshotChecked` so `kill(2)` never runs on the main actor.
     case restoreFromSnapshot(staged: [PresenceKey: StagedRestore])
-    case restoreFromSnapshotChecked(records: [PresenceKey: RestoredRecord])
+    case restoreFromSnapshotChecked(records: [PresenceKey: RestoredRecord], exitedSurfaces: Set<UUID>)
 
+    @CasePathable
     enum Delegate: Equatable, Sendable {
       /// Surfaces whose presence record was added, removed, or had its activity flip.
       /// Parent fans out per-row `agentSnapshotChanged` via the `surfaceToItemID` reverse index.
       case surfacesChanged(Set<UUID>)
+      /// Surfaces whose last agent died without a `session_end`: the liveness
+      /// sweep found its process gone, or it exited while Kelpie was quit.
+      case agentsExited(Set<UUID>)
     }
   }
 
@@ -146,7 +150,7 @@ struct AgentPresenceFeature {
 
       case .livenessSweepResult(let snapshot, let alive):
         let changed = Self.applyLiveness(delta: alive, snapshot: snapshot, into: &state)
-        return Self.surfacesChangedEffect(changed)
+        return .merge(Self.surfacesChangedEffect(changed), Self.agentsExitedEffect(changed, state: state))
 
       case .start:
         return .run { send in
@@ -174,19 +178,13 @@ struct AgentPresenceFeature {
       case .restoreFromSnapshot(let staged):
         guard !staged.isEmpty else { return .none }
         return .run { send in
-          let checked = staged.compactMapValues { stage -> RestoredRecord? in
-            let alive = stage.pids.filter { Self.isAlive($0) }
-            guard !alive.isEmpty else { return nil }
-            return RestoredRecord(
-              alivePids: alive, activity: stage.activity, model: stage.model, effort: stage.effort)
-          }
-          guard !checked.isEmpty else { return }
-          await send(.restoreFromSnapshotChecked(records: checked))
+          let check = Self.checkRestore(staged)
+          await send(.restoreFromSnapshotChecked(records: check.records, exitedSurfaces: check.exitedSurfaces))
         }
 
-      case .restoreFromSnapshotChecked(let records):
+      case .restoreFromSnapshotChecked(let records, let exitedSurfaces):
         let changed = Self.applyRestore(records: records, into: &state)
-        return Self.surfacesChangedEffect(changed)
+        return .merge(Self.surfacesChangedEffect(changed), Self.agentsExitedEffect(exitedSurfaces, state: state))
       }
     }
   }
@@ -194,6 +192,14 @@ struct AgentPresenceFeature {
   private static func surfacesChangedEffect(_ surfaces: Set<UUID>) -> Effect<Action> {
     guard !surfaces.isEmpty else { return .none }
     return .send(.delegate(.surfacesChanged(surfaces)))
+  }
+
+  /// Reports the surfaces left with no agent; one a hook event re-seeded in the
+  /// meantime has its agent back and is skipped.
+  private static func agentsExitedEffect(_ surfaces: Set<UUID>, state: State) -> Effect<Action> {
+    let exited = surfaces.filter { state.bySurface[$0] == nil }
+    guard !exited.isEmpty else { return .none }
+    return .send(.delegate(.agentsExited(exited)))
   }
 
   // MARK: - Mutators.
@@ -383,6 +389,24 @@ struct AgentPresenceFeature {
     }
     for surfaceID in dirtySurfaces { rebuildPresence(forSurface: surfaceID, in: &state) }
     return dirtySurfaces
+  }
+
+  /// The off-main liveness pass over staged records: the records to restore,
+  /// and the surfaces whose every staged agent died while Kelpie was quit.
+  struct RestoreCheck: Sendable {
+    var records: [PresenceKey: RestoredRecord]
+    var exitedSurfaces: Set<UUID>
+  }
+
+  /// Runs `kill(2)`, so callers keep it off the main actor.
+  nonisolated static func checkRestore(_ staged: [PresenceKey: StagedRestore]) -> RestoreCheck {
+    let records = staged.compactMapValues { stage -> RestoredRecord? in
+      let alive = stage.pids.filter { isAlive($0) }
+      guard !alive.isEmpty else { return nil }
+      return RestoredRecord(alivePids: alive, activity: stage.activity, model: stage.model, effort: stage.effort)
+    }
+    let exitedSurfaces = Set(staged.keys.map(\.surfaceID)).subtracting(records.keys.map(\.surfaceID))
+    return RestoreCheck(records: records, exitedSurfaces: exitedSurfaces)
   }
 
   struct StagedRestore: Sendable {

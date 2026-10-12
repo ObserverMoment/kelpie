@@ -654,6 +654,19 @@ struct AppFeatureMailboxTests {
     #expect(rebuilt.terminalChrome.unreadMail == 0)
   }
 
+  @Test(.dependencies) func anAgentThatExitsWithoutAHookTakesItsMailWithIt() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let store = Self.makeStore(worktree: worktree)
+    let exited = UUID()
+    let running = UUID()
+    await Self.deliver(store, worktree: worktree, surfaceID: exited, "gone")
+    await Self.deliver(store, worktree: worktree, surfaceID: running, "here")
+
+    await store.send(.agentPresence(.delegate(.agentsExited([exited]))))
+    await store.receive(\.mailbox.sessionEnded)
+    #expect(Array(store.state.mailbox.file.boxes.ids) == [running])
+  }
+
   @Test(.dependencies) func closedSurfacesDropTheirBoxes() async {
     let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
     let store = Self.makeStore(worktree: worktree)
