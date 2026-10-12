@@ -18,7 +18,7 @@ struct MailboxView: View {
     if let message = store.openMessage, let row = store.selectedRow {
       MailMessageViewer(
         message: message, title: Self.title(for: row, runtime: runtime), returnsToPane: store.viewerReturnsToPane,
-        isReadingAloud: store.isReadingAloud
+        isReadingAloud: store.isReadingAloud, isAgentRunning: !row.isStale
       ) {
         store.send(.viewerClosed)
       } onDone: {
@@ -229,19 +229,16 @@ private struct MailMessageViewer: View {
   /// Opened from the pane, so closing goes back there rather than the inbox.
   let returnsToPane: Bool
   let isReadingAloud: Bool
+  let isAgentRunning: Bool
   let onClose: () -> Void
   let onDone: () -> Void
   let onReadAloud: () -> Void
   let onSend: (String) -> Void
   @Shared(.settingsFile) private var settingsFile
-  @State private var draft = ""
-  @FocusState private var isReplyFocused: Bool
 
   /// Shared by the message and the reply box so they line up.
-  private static let columnWidth: CGFloat = 820
-  private static let columnPadding: CGFloat = 32
-
-  private var isDraftBlank: Bool { draft.allSatisfy(\.isWhitespace) }
+  fileprivate static let columnWidth: CGFloat = 820
+  fileprivate static let columnPadding: CGFloat = 32
 
   var body: some View {
     VStack(spacing: 0) {
@@ -291,43 +288,59 @@ private struct MailMessageViewer: View {
           .frame(maxWidth: .infinity, alignment: .center)
       }
       .safeAreaInset(edge: .bottom, spacing: 0) {
-        replyBox
+        ReplyBox(isAgentRunning: isAgentRunning, onSend: onSend)
       }
     }
     .accessibilityIdentifier("mailMessageViewer")
-    .onAppear { isReplyFocused = true }
   }
 
-  private var replyBox: some View {
+  private var readAloudShortcut: String {
+    WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.readLastAgentMessageAloud, overrides: settingsFile.global.shortcutOverrides)
+  }
+}
+
+/// Owns the draft, so a keystroke re-renders the box and not the message.
+private struct ReplyBox: View {
+  /// A stale session's agent has exited, so there is no one to reply to.
+  let isAgentRunning: Bool
+  let onSend: (String) -> Void
+  @State private var draft = ""
+  @FocusState private var isFocused: Bool
+
+  private var isDraftBlank: Bool { draft.allSatisfy(\.isWhitespace) }
+
+  private var placeholder: String {
+    isAgentRunning ? "Reply to the agent" : "No agent is running in this session"
+  }
+
+  var body: some View {
     VStack(spacing: 0) {
       Divider()
       HStack(alignment: .bottom, spacing: 8) {
-        TextField("Reply to the agent", text: $draft, axis: .vertical)
+        TextField(placeholder, text: $draft, axis: .vertical)
           .lineLimit(3...10)
           .textFieldStyle(.roundedBorder)
           .appFont(.body)
-          .focused($isReplyFocused)
+          .focused($isFocused)
           .onSubmit(send)
+          .disabled(!isAgentRunning)
           .help("Reply to the agent: Return sends and marks done, ⌥Return adds a line")
           .accessibilityIdentifier("mailReplyField")
         Button("Send", systemImage: "arrow.up.circle.fill", action: send)
           .labelStyle(.iconOnly)
           .buttonStyle(.borderless)
           .appFont(.title2)
-          .disabled(isDraftBlank)
+          .disabled(!isAgentRunning || isDraftBlank)
           .help("Send the reply and mark the message done (Return)")
       }
-      .frame(maxWidth: Self.columnWidth)
-      .padding(.horizontal, Self.columnPadding)
+      .frame(maxWidth: MailMessageViewer.columnWidth)
+      .padding(.horizontal, MailMessageViewer.columnPadding)
       .padding(.vertical, 12)
       .frame(maxWidth: .infinity, alignment: .center)
     }
     .background(Color(nsColor: .controlBackgroundColor))
-  }
-
-  private var readAloudShortcut: String {
-    WorktreeDetailView.resolveShortcutDisplay(
-      for: AppShortcuts.readLastAgentMessageAloud, overrides: settingsFile.global.shortcutOverrides)
+    .onAppear { isFocused = true }
   }
 
   private func send() {

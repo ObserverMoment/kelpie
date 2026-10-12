@@ -30,6 +30,8 @@ struct MailboxFeature {
 
     var selectedBox: Mailbox? { selectedSurfaceID.flatMap { file.boxes[id: $0] } }
 
+    var selectedMessageIDs: [MailMessage.ID] { selectedBox?.messages.map(\.id) ?? [] }
+
     var selectedRow: MailboxStructure.Row? {
       selectedSurfaceID.flatMap { id in structure.rows.first { $0.id == id } }
     }
@@ -49,7 +51,7 @@ struct MailboxFeature {
     /// survivor, or back to the session list once the box is empty.
     mutating func reconcileFocusedMessage(previous: [MailMessage.ID]) {
       focusedMessageID = FleetViewNavigation.reconcile(
-        focused: focusedMessageID, previous: previous, current: selectedBox?.messages.map(\.id) ?? [])
+        focused: focusedMessageID, previous: previous, current: selectedMessageIDs)
     }
 
     /// The overlay left for another session or a launch: a viewer opened from
@@ -148,7 +150,7 @@ struct MailboxFeature {
 
       case .moveFocus(let direction):
         guard state.openMessageID == nil else { return .none }
-        let messageIDs = state.selectedBox?.messages.map(\.id) ?? []
+        let messageIDs = state.selectedMessageIDs
         switch direction {
         case .left:
           state.focusedMessageID = nil
@@ -180,8 +182,8 @@ struct MailboxFeature {
         return .none
 
       case .lastMessageOpened(let surfaceID):
-        guard let newest = state.file.boxes[id: surfaceID]?.messages.first else { return .none }
-        Self.open(newest.id, surfaceID: surfaceID, fromPane: true, state: &state)
+        guard let newestID = state.file.newestMessageID(for: surfaceID) else { return .none }
+        Self.open(newestID, surfaceID: surfaceID, fromPane: true, state: &state)
         return .none
 
       case .viewerClosed:
@@ -220,7 +222,7 @@ struct MailboxFeature {
 
       case .markDone(let messageID):
         let effect = state.openMessageID == messageID ? Self.closeViewer(state: &state) : .none
-        let previous = state.selectedBox?.messages.map(\.id) ?? []
+        let previous = state.selectedMessageIDs
         state.$file.withLock { $0.remove(messageID) }
         state.reconcileFocusedMessage(previous: previous)
         return effect
@@ -247,7 +249,7 @@ struct MailboxFeature {
         if let open = state.openMessageID, box.messages.contains(where: { $0.id == open && $0.isReplying }) {
           state.openMessageID = nil
         }
-        let previous = state.selectedBox?.messages.map(\.id) ?? []
+        let previous = state.selectedMessageIDs
         state.$file.withLock { $0.boxes[id: surfaceID]?.messages.removeAll(where: \.isReplying) }
         state.reconcileFocusedMessage(previous: previous)
         return .none

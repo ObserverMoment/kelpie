@@ -268,6 +268,16 @@ struct AppFeature {
     var isShowingMailViewer: Bool {
       fleetView.isPresented && fleetView.mode == .mailbox && mailbox.openMessage != nil
     }
+
+    /// What the Read Aloud hotkey reads: while the Mailbox shows, the open
+    /// message, else the inbox's focused one, else the selected session's
+    /// newest; otherwise the focused pane's newest.
+    var readAloudMessageID: MailMessage.ID? {
+      guard fleetView.isPresented, fleetView.mode == .mailbox else {
+        return focusedSurfaceID.flatMap(mailbox.file.newestMessageID(for:))
+      }
+      return mailbox.openMessage?.id ?? mailbox.focusedMessageID ?? mailbox.selectedBox?.messages.first?.id
+    }
   }
 
   /// A CLI socket command whose response is held open until the operation
@@ -1172,11 +1182,9 @@ struct AppFeature {
         )
 
       case .readLastAgentMessageAloud(let surfaceID):
-        // The open viewer's message, else the pane's newest.
+        // A tab strip button names its pane; the hotkey reads what is on screen.
         let messageID =
-          surfaceID == nil && state.isShowingMailViewer
-          ? state.mailbox.openMessageID
-          : (surfaceID ?? state.focusedSurfaceID).flatMap { state.mailbox.file.boxes[id: $0]?.messages.first?.id }
+          if let surfaceID { state.mailbox.file.newestMessageID(for: surfaceID) } else { state.readAloudMessageID }
         return .send(.mailbox(.readAloudToggled(messageID)))
 
       case .replyDeliveryFailed:
@@ -1853,6 +1861,13 @@ struct AppFeature {
         return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, input: text, state: &state)
 
       case .mailbox(.delegate(.sendReply(let messageID, let surfaceID, let text))):
+        // A stale box's agent has exited: the reply would land in the shell and
+        // the message would be cleared as if answered.
+        guard state.agentPresence.bySurface[surfaceID]?.isEmpty == false else {
+          state.alert = lastAgentMessageAlert(
+            title: "Reply not sent", message: "The agent in this session is no longer running.")
+          return .none
+        }
         return .run { [terminalClient] send in
           let delivered = await terminalClient.deliverPrompt(surfaceID, text)
           await send(delivered ? .mailbox(.markDone(messageID)) : .replyDeliveryFailed)

@@ -18,7 +18,7 @@ extension SpeechClient: DependencyKey {
 @MainActor
 private final class SpeechUtterancePlayer: NSObject, AVSpeechSynthesizerDelegate {
   private let synthesizer = AVSpeechSynthesizer()
-  private var finished: CheckedContinuation<Void, Never>?
+  private var speechEndContinuation: CheckedContinuation<Void, Never>?
 
   func speak(_ text: String) async {
     guard !text.isEmpty, !Task.isCancelled else { return }
@@ -27,7 +27,7 @@ private final class SpeechUtterancePlayer: NSObject, AVSpeechSynthesizerDelegate
     synthesizer.delegate = self
     await withTaskCancellationHandler {
       await withCheckedContinuation { continuation in
-        finished = continuation
+        speechEndContinuation = continuation
         synthesizer.speak(utterance)
       }
     } onCancel: {
@@ -36,8 +36,8 @@ private final class SpeechUtterancePlayer: NSObject, AVSpeechSynthesizerDelegate
   }
 
   private func finish() {
-    finished?.resume()
-    finished = nil
+    speechEndContinuation?.resume()
+    speechEndContinuation = nil
   }
 
   /// Highest quality first (a downloaded Premium voice beats the stock one),

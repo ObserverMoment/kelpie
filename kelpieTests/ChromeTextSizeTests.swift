@@ -86,12 +86,12 @@ struct AppFontMetricsTests {
   }
 
   @Test func scaledPointSizeGrowsWithTheSize() {
-    let standard = AppFontMetrics.scaledPointSize(for: .body, size: .default)
-    let large = AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 15))
-    let extraLarge = AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 17))
-    #expect(standard <= large)
-    #expect(large <= extraLarge)
-    #expect(standard < extraLarge)
+    let smallest = AppFontMetrics.scaledPointSize(for: .body, size: .default)
+    let middle = AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 15))
+    let largest = AppFontMetrics.scaledPointSize(for: .body, size: ChromeTextSize(points: 17))
+    #expect(smallest <= middle)
+    #expect(middle <= largest)
+    #expect(smallest < largest)
   }
 
   @Test func bodyTextLandsOnThePointSize() {

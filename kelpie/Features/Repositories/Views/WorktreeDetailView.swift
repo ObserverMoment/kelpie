@@ -362,8 +362,11 @@ struct WorktreeDetailView: View {
     let isPodWorkspace = state.fleetView.isShowingPodWorkspace
     let actsOnLayout = hasActiveWorktree && !isPodWorkspace
     let focusedSurfaceHasMail = state.focusedSurfaceHasMail
-    let isReadingAloud = state.mailbox.isReadingAloud
-    let isShowingMailViewer = state.isShowingMailViewer
+    // Coarser than `readAloudMessageID`, which the reducer resolves, so inbox
+    // arrow keys don't re-run this body.
+    let isShowingMailbox = state.fleetView.isPresented && state.fleetView.mode == .mailbox
+    let hasReadAloudTarget = isShowingMailbox ? !state.mailbox.file.boxes.isEmpty : focusedSurfaceHasMail
+    let canToggleReadAloud = state.mailbox.isReadingAloud || (actsOnLayout && hasReadAloudTarget)
     return
       content
       // Open is enabled only when the resolved editor can open the selection
@@ -397,12 +400,10 @@ struct WorktreeDetailView: View {
       .focusedAction(\.showLastAgentMessageAction, enabled: actsOnLayout && focusedSurfaceHasMail) {
         store.send(.showLastAgentMessage(surfaceID: nil))
       }
-      // Stopping works from any pane, mail or not. Scene-wide so it survives
-      // focus moving into the mail viewer's reply box, outside this view.
-      .focusedSceneAction(
-        \.readLastAgentMessageAloudAction,
-        enabled: actsOnLayout && (focusedSurfaceHasMail || isReadingAloud || isShowingMailViewer)
-      ) {
+      // Stopping works anywhere in the main window, the pod workspace included.
+      // Scene-wide so it survives focus moving into the mail viewer's reply
+      // box, outside this view.
+      .focusedSceneAction(\.readLastAgentMessageAloudAction, enabled: canToggleReadAloud) {
         store.send(.readLastAgentMessageAloud(surfaceID: nil))
       }
       .focusedAction(\.equalizeSplitsAction, enabled: actsOnLayout) {

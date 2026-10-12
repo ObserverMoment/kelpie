@@ -41,6 +41,10 @@ nonisolated struct MailboxesFile: Equatable, Codable, Sendable {
     boxes[id: surfaceID]?.messages.isEmpty == false
   }
 
+  func newestMessageID(for surfaceID: UUID) -> MailMessage.ID? {
+    boxes[id: surfaceID]?.messages.first?.id
+  }
+
   /// Latest message per surface, for the Fleet card excerpt.
   var latestBodyBySurface: [UUID: String] {
     boxes.reduce(into: [:]) { $0[$1.surfaceID] = $1.latestBody }

@@ -53,7 +53,7 @@ struct FileExplorerOutlineView: NSViewRepresentable {
   /// table font the label; a scaled size needs `.custom` so the table stops
   /// overriding the cell's font.
   static func rowSizeStyle(for size: ChromeTextSize) -> NSTableView.RowSizeStyle {
-    size == .default ? .default : .custom
+    size == ChromeTextSize.default ? .default : .custom
   }
 
   func makeCoordinator() -> Coordinator {

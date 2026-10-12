@@ -20,6 +20,7 @@ struct AppFeatureMailboxTests {
 
   private static func makeStore(
     worktree: Worktree, others: [Worktree] = [], layouts: IdentifiedArrayOf<LayoutFeature.State> = [],
+    liveAgentSurfaceIDs: [UUID] = [],
     speak: @escaping @MainActor @Sendable (String) async -> Void = { _ in }
   ) -> TestStoreOf<AppFeature> {
     var repositories = RepositoriesFeature.State(reconciledRepositories: [
@@ -32,6 +33,9 @@ struct AppFeatureMailboxTests {
     repositories.recomputeSidebarStructureIfChanged()
     var state = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     state.terminals.layouts = layouts
+    for surfaceID in liveAgentSurfaceIDs {
+      state.agentPresence.bySurface[surfaceID] = [.claude]
+    }
     let store = TestStore(initialState: state) {
       AppFeature()
     } withDependencies: {
@@ -192,11 +196,79 @@ struct AppFeatureMailboxTests {
     #expect(spoken.value == ["first"])
   }
 
+  @Test(.dependencies) func readAloudButtonReadsItsPanesNewestMessageOverTheOpenViewer() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let spoken = LockIsolated<[String]>([])
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      speak: { text in spoken.withValue { $0.append(text) } })
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
+    let first = store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id
+
+    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.mailbox(.messageOpened(first)))
+    await store.send(.readLastAgentMessageAloud(surfaceID: surfaceID))
+    await store.receive(\.mailbox.readAloudFinished)
+    #expect(spoken.value == ["second"])
+  }
+
+  @Test(.dependencies) func readAloudHotkeyReadsTheFocusedInboxMessage() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let spoken = LockIsolated<[String]>([])
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      speak: { text in spoken.withValue { $0.append(text) } })
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
+
+    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.fleetView(.moveFocus(.right)))
+    await store.receive(\.mailbox.moveFocus)
+    await store.send(.fleetView(.moveFocus(.down)))
+    await store.receive(\.mailbox.moveFocus)
+    #expect(store.state.mailbox.focusedMessageID == store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id)
+    await store.send(.readLastAgentMessageAloud(surfaceID: nil))
+    await store.receive(\.mailbox.readAloudFinished)
+    #expect(spoken.value == ["first"])
+  }
+
+  @Test(.dependencies) func readAloudHotkeyReadsTheSelectedSessionOverTheFocusedPane() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let paneSurfaceID = UUID()
+    let otherSurfaceID = UUID()
+    let spoken = LockIsolated<[String]>([])
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: paneSurfaceID, tabID: TabID())],
+      speak: { text in spoken.withValue { $0.append(text) } })
+    await Self.deliver(store, worktree: worktree, surfaceID: paneSurfaceID, "pane")
+    await Self.deliver(store, worktree: worktree, surfaceID: otherSurfaceID, "other")
+
+    await store.send(.fleetView(.toggleMailbox))
+    // Opening the Mailbox may select either row first; step to the other one.
+    let rows = store.state.mailbox.structure.rows.map(\.id)
+    let selectedIndex = rows.firstIndex(of: store.state.mailbox.selectedSurfaceID!)!
+    let otherIndex = rows.firstIndex(of: otherSurfaceID)!
+    let direction: FleetViewNavigation.Direction = otherIndex > selectedIndex ? .down : .up
+    for _ in 0..<abs(otherIndex - selectedIndex) {
+      await store.send(.fleetView(.moveFocus(direction)))
+      await store.receive(\.mailbox.moveFocus)
+    }
+    #expect(store.state.mailbox.selectedSurfaceID == otherSurfaceID)
+    #expect(store.state.mailbox.focusedMessageID == nil)
+    await store.send(.readLastAgentMessageAloud(surfaceID: nil))
+    await store.receive(\.mailbox.readAloudFinished)
+    #expect(spoken.value == ["other"])
+  }
+
   @Test(.dependencies) func viewerReplyIsDeliveredThenTheMessageIsDone() async {
     let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
-      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      liveAgentSurfaceIDs: [surfaceID])
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
     let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
     let delivered = LockIsolated<[String]>([])
@@ -211,11 +283,32 @@ struct AppFeatureMailboxTests {
     #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.isEmpty != false)
   }
 
-  @Test(.dependencies) func failedReplyKeepsTheMessageAndAlerts() async {
+  @Test(.dependencies) func replyToAnExitedAgentIsNotDelivered() async {
     let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    let delivered = LockIsolated(false)
+    store.dependencies.terminalClient.deliverPrompt = { _, _ in
+      delivered.setValue(true)
+      return true
+    }
+
+    await store.send(.mailbox(.replySent(id, text: "ok")))
+    await store.receive(\.mailbox.delegate.sendReply)
+    #expect(!delivered.value)
+    #expect(store.state.alert != nil)
+    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.map(\.id) == [id])
+  }
+
+  @Test(.dependencies) func failedReplyKeepsTheMessageAndAlerts() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      liveAgentSurfaceIDs: [surfaceID])
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
     let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
     store.dependencies.terminalClient.deliverPrompt = { _, _ in false }
