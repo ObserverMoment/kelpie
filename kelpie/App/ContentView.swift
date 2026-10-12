@@ -89,8 +89,11 @@ struct ContentView: View {
     // Fleet View closes, so only a permanently mounted host can deactivate the
     // monitor for the exit transition.
     .background {
-      // Off in the pod workspace: its terminals take every keystroke, Escape included.
-      FleetViewKeyMonitor(isActive: store.fleetView.isPresented && !store.fleetView.isShowingPodWorkspace) {
+      // Off in the pod workspace and the mail viewer: their terminals and reply
+      // box take every keystroke, Escape included.
+      FleetViewKeyMonitor(
+        isActive: store.fleetView.isPresented && !store.fleetView.isShowingPodWorkspace && !store.isShowingMailViewer
+      ) {
         decision in
         switch decision {
         case .move(let direction): store.send(.fleetView(.moveFocus(direction)))

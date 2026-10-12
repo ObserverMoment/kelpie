@@ -27,7 +27,7 @@ extension AppFeature.Action {
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
       .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom, .showLastAgentMessage,
-      .readLastAgentMessageAloud, .equalizeSplits, .focusSplit, .jumpToLatestUnread,
+      .readLastAgentMessageAloud, .replyDeliveryFailed, .equalizeSplits, .focusSplit, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,

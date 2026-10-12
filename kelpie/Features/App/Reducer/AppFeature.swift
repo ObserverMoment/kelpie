@@ -263,6 +263,11 @@ struct AppFeature {
     var focusedSurfaceHasMail: Bool {
       focusedSurfaceID.map(mailbox.file.hasMail(for:)) ?? false
     }
+
+    /// A Mailbox message is open full-window, with its reply box.
+    var isShowingMailViewer: Bool {
+      fleetView.isPresented && fleetView.mode == .mailbox && mailbox.openMessage != nil
+    }
   }
 
   /// A CLI socket command whose response is held open until the operation
@@ -356,6 +361,8 @@ struct AppFeature {
     /// Reads a pane's newest Mailbox message aloud, or stops the reading;
     /// `nil` means the focused pane.
     case readLastAgentMessageAloud(surfaceID: UUID?)
+    /// The viewer's reply could not reach its session.
+    case replyDeliveryFailed
     case focusSplit(TerminalSplitMenuDirection)
     case selectTerminalTabAtIndex(Int)
     case selectNextTerminalTab
@@ -1165,7 +1172,17 @@ struct AppFeature {
         )
 
       case .readLastAgentMessageAloud(let surfaceID):
-        return .send(.mailbox(.readAloudToggled(surfaceID: surfaceID ?? state.focusedSurfaceID)))
+        // The open viewer's message, else the pane's newest.
+        let messageID =
+          surfaceID == nil && state.isShowingMailViewer
+          ? state.mailbox.openMessageID
+          : (surfaceID ?? state.focusedSurfaceID).flatMap { state.mailbox.file.boxes[id: $0]?.messages.first?.id }
+        return .send(.mailbox(.readAloudToggled(messageID)))
+
+      case .replyDeliveryFailed:
+        state.alert = lastAgentMessageAlert(
+          title: "Reply not sent", message: "The session's terminal is not running. Open its tab, then send again.")
+        return .none
 
       case .toggleSplitZoom:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
@@ -1834,6 +1851,12 @@ struct AppFeature {
       case .mailbox(.delegate(.reply(let worktreeID, let surfaceID, let text))):
         // The quote lands at the prompt without a Return.
         return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, input: text, state: &state)
+
+      case .mailbox(.delegate(.sendReply(let messageID, let surfaceID, let text))):
+        return .run { [terminalClient] send in
+          let delivered = await terminalClient.deliverPrompt(surfaceID, text)
+          await send(delivered ? .mailbox(.markDone(messageID)) : .replyDeliveryFailed)
+        }
 
       case .mailbox(.delegate(.closedToPane(let worktreeID, let surfaceID))):
         // Back to the origin pane, unless the user moved to another worktree

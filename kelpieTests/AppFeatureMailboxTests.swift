@@ -173,6 +173,59 @@ struct AppFeatureMailboxTests {
     #expect(spoken.value == ["hi"])
   }
 
+  @Test(.dependencies) func readAloudHotkeyReadsTheOpenViewerMessage() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let spoken = LockIsolated<[String]>([])
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      speak: { text in spoken.withValue { $0.append(text) } })
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
+    let first = store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id
+
+    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.mailbox(.messageOpened(first)))
+    #expect(store.state.isShowingMailViewer)
+    await store.send(.readLastAgentMessageAloud(surfaceID: nil))
+    await store.receive(\.mailbox.readAloudFinished)
+    #expect(spoken.value == ["first"])
+  }
+
+  @Test(.dependencies) func viewerReplyIsDeliveredThenTheMessageIsDone() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    let delivered = LockIsolated<[String]>([])
+    store.dependencies.terminalClient.deliverPrompt = { target, text in
+      delivered.withValue { $0.append(text) }
+      return target == surfaceID
+    }
+
+    await store.send(.mailbox(.replySent(id, text: "ok")))
+    await store.receive(\.mailbox.markDone)
+    #expect(delivered.value == [MailboxFeature.replyQuote(for: "hi") + "ok"])
+    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.isEmpty != false)
+  }
+
+  @Test(.dependencies) func failedReplyKeepsTheMessageAndAlerts() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    store.dependencies.terminalClient.deliverPrompt = { _, _ in false }
+
+    await store.send(.mailbox(.replySent(id, text: "ok")))
+    await store.receive(\.replyDeliveryFailed)
+    #expect(store.state.alert != nil)
+    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.map(\.id) == [id])
+  }
+
   @Test(.dependencies) func lastMessageRequestIsANoOpWithoutMail() async {
     let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
     let store = Self.makeStore(

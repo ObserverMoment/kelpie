@@ -204,14 +204,15 @@ struct MailboxFeatureTests {
     #expect(Array(store.state.file.boxes.ids) == [live])
   }
 
-  @Test(.dependencies) func readAloudSpeaksTheNewestMessageAsPlainText() async {
+  @Test(.dependencies) func readAloudSpeaksTheGivenMessageAsPlainText() async {
     let spoken = LockIsolated<[String]>([])
     let store = Self.makeStore(speak: { text in spoken.withValue { $0.append(text) } })
     let surface = UUID()
-    await Self.deliver(store, surface: surface, "old")
     await Self.deliver(store, surface: surface, "**All** done")
+    await Self.deliver(store, surface: surface, "newer")
+    let older = store.state.file.boxes[id: surface]!.messages[1].id
 
-    await store.send(.readAloudToggled(surfaceID: surface))
+    await store.send(.readAloudToggled(older))
     #expect(store.state.isReadingAloud)
     await store.receive(\.readAloudFinished)
     #expect(!store.state.isReadingAloud)
@@ -223,20 +224,43 @@ struct MailboxFeatureTests {
     let surface = UUID()
     await Self.deliver(store, surface: surface, "hello")
 
-    await store.send(.readAloudToggled(surfaceID: surface))
+    await store.send(.readAloudToggled(store.state.file.boxes[id: surface]!.messages[0].id))
     #expect(store.state.isReadingAloud)
 
     // No focused pane (or one without mail) still stops it.
-    await store.send(.readAloudToggled(surfaceID: nil))
+    await store.send(.readAloudToggled(nil))
     #expect(!store.state.isReadingAloud)
     await store.finish()
   }
 
   @Test(.dependencies) func readAloudIsANoOpWithoutMail() async {
     let store = Self.makeStore()
-    await store.send(.readAloudToggled(surfaceID: UUID()))
-    await store.send(.readAloudToggled(surfaceID: nil))
+    await store.send(.readAloudToggled(UUID()))
+    await store.send(.readAloudToggled(nil))
     #expect(!store.state.isReadingAloud)
+  }
+
+  @Test(.dependencies) func replyDelegatesTheQuotedTextAndKeepsTheMessageUntilDelivered() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "hello")
+    let id = store.state.file.boxes[id: surface]!.messages[0].id
+
+    await store.send(.replySent(id, text: "  ship it\n"))
+    await store.receive(
+      \.delegate,
+      .sendReply(messageID: id, surfaceID: surface, text: MailboxFeature.replyQuote(for: "hello") + "ship it"))
+    #expect(store.state.file.boxes[id: surface]?.messages.map(\.id) == [id])
+  }
+
+  @Test(.dependencies) func blankReplyIsANoOp() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "hello")
+    let id = store.state.file.boxes[id: surface]!.messages[0].id
+
+    store.exhaustivity = .on
+    await store.send(.replySent(id, text: " \n "))
   }
 
   @Test func replyQuoteKeepsShortMessagesWhole() {

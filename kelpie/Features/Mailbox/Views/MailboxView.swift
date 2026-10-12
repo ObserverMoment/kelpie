@@ -17,14 +17,19 @@ struct MailboxView: View {
   var body: some View {
     if let message = store.openMessage, let row = store.selectedRow {
       MailMessageViewer(
-        message: message, title: Self.title(for: row, runtime: runtime), returnsToPane: store.viewerReturnsToPane
+        message: message, title: Self.title(for: row, runtime: runtime), returnsToPane: store.viewerReturnsToPane,
+        isReadingAloud: store.isReadingAloud
       ) {
         store.send(.viewerClosed)
       } onDone: {
         store.send(.markDone(message.id))
-      } onReply: {
-        store.send(.replyTapped(message.id))
+      } onReadAloud: {
+        store.send(.readAloudToggled(message.id))
+      } onSend: { text in
+        store.send(.replySent(message.id, text: text))
       }
+      // A draft belongs to its message.
+      .id(message.id)
     } else if store.structure.rows.isEmpty {
       ContentUnavailableView(
         "No Mail",
@@ -216,25 +221,40 @@ private struct MailMessageRow: View {
   }
 }
 
-/// One message, full window, as rendered markdown.
+/// One message, full window, as rendered markdown, with a reply box docked
+/// below it.
 private struct MailMessageViewer: View {
   let message: MailMessage
   let title: String
   /// Opened from the pane, so closing goes back there rather than the inbox.
   let returnsToPane: Bool
+  let isReadingAloud: Bool
   let onClose: () -> Void
   let onDone: () -> Void
-  let onReply: () -> Void
+  let onReadAloud: () -> Void
+  let onSend: (String) -> Void
+  @Shared(.settingsFile) private var settingsFile
+  @State private var draft = ""
+  @FocusState private var isReplyFocused: Bool
+
+  /// Shared by the message and the reply box so they line up.
+  private static let columnWidth: CGFloat = 820
+  private static let columnPadding: CGFloat = 32
+
+  private var isDraftBlank: Bool { draft.allSatisfy(\.isWhitespace) }
 
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
+        // Escape lands here even while the reply box has focus.
         if returnsToPane {
           Button("Close", systemImage: "xmark", action: onClose)
+            .keyboardShortcut(.cancelAction)
             .help("Close and return to the pane (Esc)")
         } else {
           Button("Back", systemImage: "chevron.left", action: onClose)
-            .help("Back to the inbox")
+            .keyboardShortcut(.cancelAction)
+            .help("Back to the inbox (Esc)")
         }
         Text(title)
           .appFont(.headline)
@@ -243,10 +263,15 @@ private struct MailMessageViewer: View {
           .appFont(.caption)
           .foregroundStyle(.secondary)
         Spacer()
+        Button(
+          isReadingAloud ? "Stop Reading" : "Read Aloud",
+          systemImage: isReadingAloud ? "stop.circle" : "speaker.wave.2",
+          action: onReadAloud
+        )
+        .help("Read this message aloud, or stop (\(readAloudShortcut))")
         Button("Done", systemImage: "checkmark", action: onDone)
-          .help("Mark as done and remove from the inbox")
-        Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply)
-          .help("Reply in the session with this message quoted")
+          .keyboardShortcut(.return, modifiers: [.command, .option])
+          .help("Mark as done and remove from the inbox (⌥⌘↩)")
       }
       .buttonStyle(.borderless)
       .padding(.horizontal, 20)
@@ -257,12 +282,53 @@ private struct MailMessageViewer: View {
         StructuredText(markdown: message.body)
           .textual.structuredTextStyle(.gitHub)
           .textual.textSelection(.enabled)
-          .frame(maxWidth: 820, alignment: .leading)
-          .padding(.horizontal, 32)
+          .frame(maxWidth: Self.columnWidth, alignment: .leading)
+          .padding(.horizontal, Self.columnPadding)
           .padding(.vertical, 24)
           .frame(maxWidth: .infinity, alignment: .center)
       }
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        replyBox
+      }
     }
     .accessibilityIdentifier("mailMessageViewer")
+    .onAppear { isReplyFocused = true }
+  }
+
+  private var replyBox: some View {
+    VStack(spacing: 0) {
+      Divider()
+      HStack(alignment: .bottom, spacing: 8) {
+        TextField("Reply to the agent", text: $draft, axis: .vertical)
+          .lineLimit(3...10)
+          .textFieldStyle(.roundedBorder)
+          .appFont(.body)
+          .focused($isReplyFocused)
+          .onSubmit(send)
+          .help("Reply to the agent: Return sends and marks done, ⌥Return adds a line")
+          .accessibilityIdentifier("mailReplyField")
+        Button("Send", systemImage: "arrow.up.circle.fill", action: send)
+          .labelStyle(.iconOnly)
+          .buttonStyle(.borderless)
+          .appFont(.title2)
+          .disabled(isDraftBlank)
+          .help("Send the reply and mark the message done (Return)")
+      }
+      .frame(maxWidth: Self.columnWidth)
+      .padding(.horizontal, Self.columnPadding)
+      .padding(.vertical, 12)
+      .frame(maxWidth: .infinity, alignment: .center)
+    }
+    .background(Color(nsColor: .controlBackgroundColor))
+  }
+
+  private var readAloudShortcut: String {
+    WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.readLastAgentMessageAloud, overrides: settingsFile.global.shortcutOverrides)
+  }
+
+  private func send() {
+    guard !isDraftBlank else { return }
+    onSend(draft)
   }
 }

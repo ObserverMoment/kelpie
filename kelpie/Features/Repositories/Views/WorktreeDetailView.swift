@@ -363,6 +363,7 @@ struct WorktreeDetailView: View {
     let actsOnLayout = hasActiveWorktree && !isPodWorkspace
     let focusedSurfaceHasMail = state.focusedSurfaceHasMail
     let isReadingAloud = state.mailbox.isReadingAloud
+    let isShowingMailViewer = state.isShowingMailViewer
     return
       content
       // Open is enabled only when the resolved editor can open the selection
@@ -396,9 +397,11 @@ struct WorktreeDetailView: View {
       .focusedAction(\.showLastAgentMessageAction, enabled: actsOnLayout && focusedSurfaceHasMail) {
         store.send(.showLastAgentMessage(surfaceID: nil))
       }
-      // Stopping works from any pane, mail or not.
-      .focusedAction(
-        \.readLastAgentMessageAloudAction, enabled: actsOnLayout && (focusedSurfaceHasMail || isReadingAloud)
+      // Stopping works from any pane, mail or not. Scene-wide so it survives
+      // focus moving into the mail viewer's reply box, outside this view.
+      .focusedSceneAction(
+        \.readLastAgentMessageAloudAction,
+        enabled: actsOnLayout && (focusedSurfaceHasMail || isReadingAloud || isShowingMailViewer)
       ) {
         store.send(.readLastAgentMessageAloud(surfaceID: nil))
       }

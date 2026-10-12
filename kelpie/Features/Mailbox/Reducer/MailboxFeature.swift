@@ -87,10 +87,13 @@ struct MailboxFeature {
     /// the pane has no mail.
     case lastMessageOpened(surfaceID: UUID)
     case viewerClosed
-    /// Stops the reading, from any pane, or reads the pane's newest message
-    /// aloud. No-op when nothing is reading and the pane has no mail.
-    case readAloudToggled(surfaceID: UUID?)
+    /// Stops the reading, from anywhere, or reads the message aloud. No-op
+    /// when nothing is reading and there is no message.
+    case readAloudToggled(MailMessage.ID?)
     case readAloudFinished
+    /// The viewer's reply box: sends the quoted reply to the session; the
+    /// message is done once it lands. No-op for a blank reply.
+    case replySent(MailMessage.ID, text: String)
     /// The overlay closed: a viewer opened from a pane closes with it, so the
     /// inbox shows next time.
     case overlayDismissed
@@ -112,6 +115,8 @@ struct MailboxFeature {
     case reply(worktreeID: Worktree.ID, surfaceID: UUID, text: String)
     /// A viewer opened from a pane closed: leave the overlay for that pane.
     case closedToPane(worktreeID: Worktree.ID, surfaceID: UUID)
+    /// Deliver `text` to the session and submit it, then mark the message done.
+    case sendReply(messageID: MailMessage.ID, surfaceID: UUID, text: String)
   }
 
   private nonisolated enum CancelID: Hashable, Sendable { case readAloud }
@@ -182,12 +187,12 @@ struct MailboxFeature {
       case .viewerClosed:
         return Self.closeViewer(state: &state)
 
-      case .readAloudToggled(let surfaceID):
+      case .readAloudToggled(let messageID):
         if state.isReadingAloud {
           state.isReadingAloud = false
           return .cancel(id: CancelID.readAloud)
         }
-        guard let body = surfaceID.flatMap({ state.file.boxes[id: $0]?.latestBody }) else { return .none }
+        guard let body = messageID.flatMap({ state.file.message($0)?.body }) else { return .none }
         state.isReadingAloud = true
         let text = SpeakableText.plainText(fromMarkdown: body)
         return .run { [speechClient] send in
@@ -199,6 +204,15 @@ struct MailboxFeature {
       case .readAloudFinished:
         state.isReadingAloud = false
         return .none
+
+      case .replySent(let messageID, let text):
+        let reply = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reply.isEmpty, let surfaceID = state.file.surfaceID(containing: messageID),
+          let message = state.file.message(messageID)
+        else { return .none }
+        return .send(
+          .delegate(
+            .sendReply(messageID: messageID, surfaceID: surfaceID, text: Self.replyQuote(for: message.body) + reply)))
 
       case .overlayDismissed:
         guard state.viewerReturnsToPane else { return .none }
@@ -308,6 +322,10 @@ struct MailboxFeature {
 extension MailboxesFile {
   fileprivate func surfaceID(containing messageID: MailMessage.ID) -> UUID? {
     boxes.first { $0.messages.contains { $0.id == messageID } }?.surfaceID
+  }
+
+  fileprivate func message(_ messageID: MailMessage.ID) -> MailMessage? {
+    boxes.lazy.compactMap { $0.messages.first { $0.id == messageID } }.first
   }
 
   fileprivate mutating func update(_ messageID: MailMessage.ID, _ change: (inout MailMessage) -> Void) {
