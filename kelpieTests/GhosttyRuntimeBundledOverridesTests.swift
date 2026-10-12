@@ -100,6 +100,14 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(!GhosttyRuntime.bundledOverridesString.contains("font-size"))
   }
 
+  @Test func appOwnedTierCarriesTheFontSize() {
+    let contents = GhosttyRuntime.appOwnedOverridesContents(
+      shortcutOverrides: [:], fontSize: ChromeTextSize(points: 16), version: "1.2.3")
+    let lines = contents.split(whereSeparator: \.isNewline).map(String.init)
+    #expect(lines.contains("font-size = 16"))
+    #expect(lines.contains("confirm-close-surface = true"))
+  }
+
   @Test func configResolutionMergeLoadsBothTiers() {
     let plan = GhosttyRuntime.ConfigResolution.plan(mode: .mergeAfterDefault, kelpieUserConfigExists: true)
     #expect(plan.loadUserDefaultFiles)

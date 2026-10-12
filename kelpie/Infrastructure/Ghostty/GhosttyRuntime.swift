@@ -741,6 +741,23 @@ final class GhosttyRuntime {
     tempURL.path.withCString { ghostty_config_load_file(config, $0) }
   }
 
+  /// The final config tier's contents, kept free of GhosttyKit so it is
+  /// unit-testable.
+  internal static func appOwnedOverridesContents(
+    shortcutOverrides: [AppShortcutID: AppShortcutOverride],
+    fontSize: ChromeTextSize,
+    version: String?
+  ) -> String {
+    [
+      appOwnedOverridesString,
+      terminalProgramOverrides(version: version),
+      fontSizeOverride(fontSize),
+      AppShortcuts.ghosttyKeybindConfigLines(from: shortcutOverrides).joined(separator: "\n"),
+    ]
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n")
+  }
+
   /// Writes the app-owned overrides (close predicate, TERM_PROGRAM, font size,
   /// keybind unbinds) as the final config tier so nothing can override them.
   private static func loadAppOwnedOverrides(
@@ -748,14 +765,8 @@ final class GhosttyRuntime {
     shortcutOverrides: [AppShortcutID: AppShortcutOverride],
     fontSize: ChromeTextSize
   ) {
-    let contents = [
-      appOwnedOverridesString,
-      terminalProgramOverrides(version: appVersion),
-      fontSizeOverride(fontSize),
-      AppShortcuts.ghosttyKeybindConfigLines(from: shortcutOverrides).joined(separator: "\n"),
-    ]
-    .filter { !$0.isEmpty }
-    .joined(separator: "\n")
+    let contents = appOwnedOverridesContents(
+      shortcutOverrides: shortcutOverrides, fontSize: fontSize, version: appVersion)
     guard !contents.isEmpty else { return }
     let tempURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("\(tempConfigPrefix)-app-overrides.conf")

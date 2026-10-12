@@ -233,6 +233,21 @@ struct MailboxFeatureTests {
     await store.finish()
   }
 
+  @Test(.dependencies) func removingTheMessageBeingReadStillLetsThePressStopIt() async {
+    let store = Self.makeStore(speak: { _ in try? await Task.never() })
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "hello")
+    let messageID = store.state.file.boxes[id: surface]!.messages[0].id
+
+    await store.send(.readAloudToggled(messageID))
+    await store.send(.markDone(messageID))
+    #expect(store.state.isReadingAloud)
+
+    await store.send(.readAloudToggled(nil))
+    #expect(!store.state.isReadingAloud)
+    await store.finish()
+  }
+
   @Test(.dependencies) func readAloudIsANoOpWithoutMail() async {
     let store = Self.makeStore()
     await store.send(.readAloudToggled(UUID()))
@@ -323,6 +338,12 @@ struct SpeakableTextTests {
   @Test func blocksGetTheirOwnLinesWithoutMarkup() {
     let markdown = "# Done\n\nAll **tests** pass, see [the log](https://example.com).\n\n- one\n- `two`"
     #expect(SpeakableText.plainText(fromMarkdown: markdown) == "Done\nAll tests pass, see the log.\none\ntwo")
+  }
+
+  @Test func hardWrappedLinesDoNotRunTogether() {
+    let spoken = SpeakableText.plainText(fromMarkdown: "All tests\npass now.")
+    #expect(!spoken.contains("testspass"))
+    #expect(spoken.contains("tests") && spoken.contains("pass now."))
   }
 
   @Test func codeBlocksAreNamedNotRead() {

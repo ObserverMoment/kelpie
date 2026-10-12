@@ -263,6 +263,28 @@ struct AppFeatureMailboxTests {
     #expect(spoken.value == ["other"])
   }
 
+  @Test(.dependencies) func anInboxMessageLeftOpenIsNotShownOrReadOutsideTheMailbox() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let spoken = LockIsolated<[String]>([])
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      speak: { text in spoken.withValue { $0.append(text) } })
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
+    let first = store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id
+
+    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.mailbox(.messageOpened(first)))
+    await store.send(.fleetView(.modeChanged(.fleet)))
+    #expect(!store.state.isShowingMailViewer)
+
+    await store.send(.fleetView(.dismiss))
+    await store.send(.readLastAgentMessageAloud(surfaceID: nil))
+    await store.receive(\.mailbox.readAloudFinished)
+    #expect(spoken.value == ["second"])
+  }
+
   @Test(.dependencies) func viewerReplyIsDeliveredThenTheMessageIsDone() async {
     let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
     let surfaceID = UUID()
