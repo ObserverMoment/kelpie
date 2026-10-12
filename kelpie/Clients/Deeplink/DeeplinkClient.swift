@@ -244,6 +244,7 @@ private nonisolated enum DeeplinkParser {
     // "tab/new" → create new tab.
     // "tab/<tab-uuid>/rename" → rename tab.
     // "tab/<tab-uuid>/destroy" → close tab.
+    // "tab/<tab-uuid>/last-message" → open the tab's newest Mailbox message.
     // "tab/<tab-uuid>/surface/<surface-uuid>" → focus surface.
     // "tab/<tab-uuid>/surface/<surface-uuid>/split" → split surface.
     // "tab/<tab-uuid>/surface/<surface-uuid>/destroy" → close surface.
@@ -286,6 +287,9 @@ private nonisolated enum DeeplinkParser {
     }
     if pathSegments.count >= 4, pathSegments[3] == "destroy" {
       return .worktree(id: worktreeID, action: .tabDestroy(tabID: tabUUID))
+    }
+    if pathSegments.count >= 4, pathSegments[3] == "last-message" {
+      return .worktree(id: worktreeID, action: .tabLastMessage(tabID: tabUUID))
     }
     if pathSegments.count >= 4, pathSegments[3] == "move" {
       let directionRaw = queryItems.first(where: { $0.name == "direction" })?.value ?? ""

@@ -19,10 +19,12 @@ struct AppFeatureMailboxTests {
   }
 
   private static func makeStore(
-    worktree: Worktree, layouts: IdentifiedArrayOf<LayoutFeature.State> = []
+    worktree: Worktree, others: [Worktree] = [], layouts: IdentifiedArrayOf<LayoutFeature.State> = []
   ) -> TestStoreOf<AppFeature> {
     var repositories = RepositoriesFeature.State(reconciledRepositories: [
-      Repository(id: RepositoryID(root.path), rootURL: root, name: "mailbox-app", worktrees: [worktree])
+      Repository(
+        id: RepositoryID(root.path), rootURL: root, name: "mailbox-app",
+        worktrees: IdentifiedArray(uniqueElements: [worktree] + others))
     ])
     repositories.isInitialLoadComplete = true
     repositories.selection = .worktree(worktree.id)
@@ -49,6 +51,14 @@ struct AppFeatureMailboxTests {
     let layout = PaneLayout(
       tree: SplitTree(view: paneID), panes: [Pane(id: paneID, tabs: IdentifiedArray(uniqueElements: [tab]))])
     return LayoutFeature.State(id: worktree.id, layout: layout)
+  }
+
+  private static func deliver(_ store: TestStoreOf<AppFeature>, worktree: Worktree, surfaceID: UUID, _ body: String)
+    async
+  {
+    await store.send(
+      .terminalEvent(.agentMailReceived(worktreeID: worktree.id, surfaceID: surfaceID, agent: .claude, body: body)))
+    await store.receive(\.mailbox.received)
   }
 
   @Test(.dependencies) func toggleMailboxShowsAndHidesTheOverlay() async {
@@ -126,6 +136,336 @@ struct AppFeatureMailboxTests {
         .focusSurface(
           worktree, tabID: tabID, surfaceID: surfaceID,
           input: "<replying-to>\nhi\n</replying-to>\n\n", submitsInput: false)))
+  }
+
+  @Test(.dependencies) func lastMessageRequestOpensTheFocusedPanesNewestMessage() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "old")
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "new")
+    #expect(store.state.focusedSurfaceHasMail)
+
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.receive(\.fleetView.toggleMailbox)
+    await store.receive(\.mailbox.lastMessageOpened)
+    #expect(store.state.fleetView.isPresented)
+    #expect(store.state.fleetView.mode == .mailbox)
+    #expect(store.state.mailbox.openMessage?.body == "new")
+    #expect(store.state.mailbox.viewerReturnsToPane)
+  }
+
+  @Test(.dependencies) func lastMessageRequestIsANoOpWithoutMail() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: UUID(), tabID: TabID())])
+    #expect(!store.state.focusedSurfaceHasMail)
+
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.finish()
+    #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func lastMessageRequestSwitchesModeOrKeepsTheMailboxOpen() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+
+    await store.send(.fleetView(.toggle))
+    await store.send(.showLastAgentMessage(surfaceID: surfaceID))
+    await store.receive(\.mailbox.lastMessageOpened)
+    #expect(store.state.fleetView.isPresented)
+    #expect(store.state.fleetView.mode == .mailbox)
+
+    // Already showing the Mailbox: the toggle would close it, so none is sent.
+    await store.send(.showLastAgentMessage(surfaceID: surfaceID))
+    await store.receive(\.mailbox.lastMessageOpened)
+    #expect(store.state.fleetView.isPresented)
+    #expect(store.state.mailbox.viewerReturnsToPane)
+  }
+
+  @Test(.dependencies) func closingAPaneViewerReturnsToThePane() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let tabID = TabID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: tabID)])
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.receive(\.mailbox.lastMessageOpened)
+
+    await store.send(.mailbox(.viewerClosed))
+    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.receive(\.repositories.selectWorktree)
+    await store.finish()
+
+    #expect(!store.state.fleetView.isPresented)
+    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(
+      sent.value.contains(
+        .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: nil, submitsInput: false)))
+  }
+
+  @Test(.dependencies) func escapeFromAPaneViewerReturnsToThePane() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let tabID = TabID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: tabID)])
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.receive(\.mailbox.lastMessageOpened)
+
+    await store.send(.fleetView(.dismiss))
+    await store.receive(\.fleetView.delegate.dismissed)
+    await store.receive(\.mailbox.overlayDismissed)
+    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.finish()
+
+    #expect(!store.state.fleetView.isPresented)
+    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(
+      sent.value.contains(
+        .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: nil, submitsInput: false)))
+  }
+
+  @Test(.dependencies) func lastMessageDeeplinkOpensTheTabsMessage() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let tabID = TabID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: tabID)])
+    store.dependencies.terminalClient.send = { _ in }
+    store.dependencies.terminalClient.tabExists = { worktreeID, candidate in
+      worktreeID == worktree.id && candidate == tabID
+    }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .tabLastMessage(tabID: tabID.rawValue))))
+    await store.receive(\.showLastAgentMessage)
+    await store.receive(\.mailbox.lastMessageOpened)
+    #expect(store.state.fleetView.isPresented)
+    #expect(store.state.mailbox.openMessage?.body == "hi")
+    #expect(store.state.alert == nil)
+  }
+
+  @Test(.dependencies) func lastMessageDeeplinkRefusalLeavesTheSelection() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let other = Self.makeWorktree("/tmp/mailbox-app/other")
+    let tabID = TabID()
+    let store = Self.makeStore(
+      worktree: worktree, others: [other], layouts: [Self.layout(worktree: other, surfaceID: UUID(), tabID: tabID)])
+    store.dependencies.terminalClient.send = { _ in }
+    store.dependencies.terminalClient.tabExists = { worktreeID, candidate in
+      worktreeID == other.id && candidate == tabID
+    }
+
+    // A tab with no mail.
+    await store.send(.deeplink(.worktree(id: other.id, action: .tabLastMessage(tabID: tabID.rawValue))))
+    await store.finish()
+    #expect(store.state.alert != nil)
+    #expect(store.state.repositories.selectedWorktreeID == worktree.id)
+    #expect(!store.state.fleetView.isPresented)
+
+    // An unknown tab.
+    await store.send(.alert(.dismiss))
+    await store.send(.deeplink(.worktree(id: other.id, action: .tabLastMessage(tabID: UUID()))))
+    await store.finish()
+    #expect(store.state.alert != nil)
+    #expect(store.state.repositories.selectedWorktreeID == worktree.id)
+    #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func lastMessageDeeplinkRefusesAWindowedPane() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let tabID = TabID()
+    var layout = Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: tabID)
+    layout.windowedPaneIDs = [layout.layout.panes[0].id]
+    let store = Self.makeStore(worktree: worktree, layouts: [layout])
+    store.dependencies.terminalClient.send = { _ in }
+    store.dependencies.terminalClient.tabExists = { worktreeID, candidate in
+      worktreeID == worktree.id && candidate == tabID
+    }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+
+    await store.send(.deeplink(.worktree(id: worktree.id, action: .tabLastMessage(tabID: tabID.rawValue))))
+    #expect(store.state.alert != nil)
+    #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies, arguments: [false, true])
+  func closingAfterMovingToAnotherWorktreeStaysThere(viaEscape: Bool) async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let other = Self.makeWorktree("/tmp/mailbox-app/other")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, others: [other],
+      layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.receive(\.mailbox.lastMessageOpened)
+
+    // A jump or slot hotkey under the overlay lands in another worktree.
+    await store.send(.repositories(.selectWorktree(other.id)))
+    await store.send(viaEscape ? .fleetView(.dismiss) : .mailbox(.viewerClosed))
+    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.receive(\.repositories.sidebarItems)
+    #expect(store.state.repositories.sidebarItems[id: other.id]?.shouldFocusTerminal == true)
+    await store.finish()
+
+    #expect(store.state.repositories.selectedWorktreeID == other.id)
+    #expect(!store.state.fleetView.isPresented)
+    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(!sent.value.contains { if case .focusSurface = $0 { true } else { false } })
+  }
+
+  @Test(.dependencies) func lastMessageDeeplinkToAnotherWorktreeClosesToThatTab() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let other = Self.makeWorktree("/tmp/mailbox-app/other")
+    let surfaceID = UUID()
+    let tabID = TabID()
+    let store = Self.makeStore(
+      worktree: worktree, others: [other],
+      layouts: [Self.layout(worktree: other, surfaceID: surfaceID, tabID: tabID)])
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    store.dependencies.terminalClient.tabExists = { worktreeID, candidate in
+      worktreeID == other.id && candidate == tabID
+    }
+    await Self.deliver(store, worktree: other, surfaceID: surfaceID, "hi")
+
+    await store.send(.deeplink(.worktree(id: other.id, action: .tabLastMessage(tabID: tabID.rawValue))))
+    await store.receive(\.mailbox.lastMessageOpened)
+    #expect(store.state.repositories.selectedWorktreeID == other.id)
+
+    await store.send(.fleetView(.dismiss))
+    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.finish()
+    #expect(
+      sent.value.contains(
+        .focusSurface(other, tabID: tabID, surfaceID: surfaceID, input: nil, submitsInput: false)))
+  }
+
+  @Test(.dependencies) func lastMessageRequestIgnoresAWindowedFocusedPane() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    var layout = Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())
+    layout.windowedPaneIDs = [layout.layout.panes[0].id]
+    let store = Self.makeStore(worktree: worktree, layouts: [layout])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    #expect(!store.state.focusedSurfaceHasMail)
+
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.finish()
+    #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func replyFromAPaneViewerFocusesThePaneOnce() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    let sent = LockIsolated<[TerminalClient.Command]>([])
+    store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.receive(\.mailbox.lastMessageOpened)
+
+    await store.send(.mailbox(.replyTapped(store.state.mailbox.openMessageID!)))
+    await store.receive(\.mailbox.delegate.reply)
+    await store.finish()
+
+    let focuses = sent.value.filter { if case .focusSurface = $0 { true } else { false } }
+    #expect(focuses.count == 1)
+    #expect(!store.state.mailbox.viewerReturnsToPane)
+    #expect(store.state.mailbox.openMessageID == nil)
+  }
+
+  @Test(.dependencies) func launchingFromFleetDropsAPaneViewer() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    store.dependencies.terminalClient.send = { _ in }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.receive(\.mailbox.lastMessageOpened)
+
+    await store.send(.fleetView(.delegate(.launch(worktreeID: worktree.id, command: "claude"))))
+    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(!store.state.mailbox.viewerReturnsToPane)
+  }
+
+  @Test(.dependencies) func paletteEntryOpensTheFocusedPanesMessage() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+
+    await store.send(.commandPalette(.delegate(.layoutCommand(.showLastAgentMessage))))
+    await store.receive(\.showLastAgentMessage)
+    await store.receive(\.mailbox.lastMessageOpened)
+    #expect(store.state.mailbox.openMessage?.body == "hi")
+  }
+
+  @Test(.dependencies) func openingAFleetCardDropsAPaneViewer() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let tabID = TabID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: tabID)])
+    store.dependencies.terminalClient.send = { _ in }
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.showLastAgentMessage(surfaceID: nil))
+    await store.receive(\.mailbox.lastMessageOpened)
+
+    await store.send(
+      .fleetView(.delegate(.openSession(worktreeID: worktree.id, tabID: tabID, surfaceID: surfaceID))))
+    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(!store.state.mailbox.viewerReturnsToPane)
+  }
+
+  @Test(.dependencies) func mailChromeTracksTheBoxAndIsRewrittenOnWake() async {
+    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let surfaceID = UUID()
+    let tabID = TabID()
+    let runtime = ContentRuntime()
+    let content = ChromeTabContent(id: ContentID(rawValue: surfaceID))
+    #expect(runtime.provision(content, at: .fallback))
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: tabID)])
+    store.dependencies.contentRuntime = runtime
+    store.dependencies.terminalClient.send = { _ in }
+
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    #expect(content.terminalChrome.hasMail)
+    #expect(content.terminalChrome.unreadMail == 1)
+
+    // A relaunch or reattach rebuilds the content with blank chrome.
+    runtime.remove(ContentID(rawValue: surfaceID), tombstone: false)
+    let rebuilt = ChromeTabContent(id: ContentID(rawValue: surfaceID))
+    #expect(runtime.provision(rebuilt, at: .fallback))
+    await store.send(.terminals(.layouts(.element(id: worktree.id, action: .wakeTab(id: tabID)))))
+    #expect(rebuilt.terminalChrome.hasMail)
+    // The test content has no builder wiring, so no dead button shows.
+    #expect(rebuilt.terminalChrome.stripAction == nil)
+    #expect(rebuilt.terminalChrome.unreadMail == 1)
+
+    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    await store.send(.mailbox(.markDone(id)))
+    #expect(!rebuilt.terminalChrome.hasMail)
+    #expect(rebuilt.terminalChrome.unreadMail == 0)
   }
 
   @Test(.dependencies) func closedSurfacesDropTheirBoxes() async {

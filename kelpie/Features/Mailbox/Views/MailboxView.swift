@@ -16,7 +16,9 @@ struct MailboxView: View {
 
   var body: some View {
     if let message = store.openMessage, let row = store.selectedRow {
-      MailMessageViewer(message: message, title: Self.title(for: row, runtime: runtime)) {
+      MailMessageViewer(
+        message: message, title: Self.title(for: row, runtime: runtime), returnsToPane: store.viewerReturnsToPane
+      ) {
         store.send(.viewerClosed)
       } onDone: {
         store.send(.markDone(message.id))
@@ -206,15 +208,22 @@ private struct MailMessageRow: View {
 private struct MailMessageViewer: View {
   let message: MailMessage
   let title: String
-  let onBack: () -> Void
+  /// Opened from the pane, so closing goes back there rather than the inbox.
+  let returnsToPane: Bool
+  let onClose: () -> Void
   let onDone: () -> Void
   let onReply: () -> Void
 
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
-        Button("Back", systemImage: "chevron.left", action: onBack)
-          .help("Back to the inbox")
+        if returnsToPane {
+          Button("Close", systemImage: "xmark", action: onClose)
+            .help("Close and return to the pane (Esc)")
+        } else {
+          Button("Back", systemImage: "chevron.left", action: onClose)
+            .help("Back to the inbox")
+        }
         Text(title)
           .appFont(.headline)
           .lineLimit(1)

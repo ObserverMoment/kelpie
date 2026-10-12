@@ -68,6 +68,7 @@ kelpie://worktree/<worktree_id>/tab/new?input=<cmd>&id=<uuid>&title=<title>&pane
 kelpie://worktree/<worktree_id>/tab/<tab_id>/rename?title=<title>             # Set the title override; empty clears.
 kelpie://worktree/<worktree_id>/tab/<tab_id>/move?direction=left|right|up|down   # Move a tab into a new split.
 kelpie://worktree/<worktree_id>/tab/<tab_id>/destroy                          # Close a tab.
+kelpie://worktree/<worktree_id>/tab/<tab_id>/last-message                     # Show the tab's newest agent message full-window. Alerts if there is none or the pane is windowed.
 ```
 
 ## Pane

@@ -296,6 +296,9 @@ struct TerminalContentBuilder {
   var wireSurface: (GhosttySurfaceView, ContentRequest) -> Void
   /// Extra environment for a spawning surface (blocking-script markers).
   var environmentExtras: (ContentRequest) -> [String: String]
+  /// Opens a content's newest Mailbox message, behind its strip button. No
+  /// silent default: an unwired chrome would show a dead button.
+  var showLastMessage: (ContentID) -> Void
 
   func factory() -> LayoutContentFactory {
     LayoutContentFactory { request in
@@ -318,7 +321,7 @@ struct TerminalContentBuilder {
       return InertTabContent(id: request.contentID, state: request.content)
     }
     let lookUpWorktree = worktree
-    return TerminalContent(
+    let content = TerminalContent(
       id: request.contentID,
       makeSurface: { geometry, currentState, phase in
         // Re-resolve so a wake long after creation sees the current worktree;
@@ -374,6 +377,9 @@ struct TerminalContentBuilder {
       },
       initialState: terminalState
     )
+    let showLastMessage = showLastMessage
+    content.terminalChrome.showLastMessage = { showLastMessage(request.contentID) }
+    return content
   }
 }
 

@@ -22,7 +22,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case splitRight, splitLeft, splitDown, splitUp
   case focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown
   case toggleSplitZoom, equalizeSplits
-  case jumpToLatestUnread
+  case jumpToLatestUnread, showLastAgentMessage
   case togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector
   case startSearch, findNext, findPrevious, useSelectionForFind
 
@@ -96,6 +96,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .toggleSplitZoom: "toggleSplitZoom"
     case .equalizeSplits: "equalizeSplits"
     case .jumpToLatestUnread: "jumpToLatestUnread"
+    case .showLastAgentMessage: "showLastAgentMessage"
     case .togglePullRequestInspector: "togglePullRequestInspector"
     case .toggleFilesInspector: "toggleFilesInspector"
     case .toggleNotificationsInspector: "toggleNotificationsInspector"
@@ -157,6 +158,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "selectNextTab": .selectNextTab,
     "selectPreviousTab": .selectPreviousTab,
     "jumpToLatestUnread": .jumpToLatestUnread,
+    "showLastAgentMessage": .showLastAgentMessage,
     "togglePullRequestInspector": .togglePullRequestInspector,
     "toggleFilesInspector": .toggleFilesInspector,
     "toggleNotificationsInspector": .toggleNotificationsInspector,
@@ -237,6 +239,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .toggleSplitZoom: "Toggle Split Zoom"
     case .equalizeSplits: "Equalize Splits"
     case .jumpToLatestUnread: "Jump to Latest Unread"
+    case .showLastAgentMessage: "Show Last Agent Message"
     case .togglePullRequestInspector: "Toggle Pull Request Inspector"
     case .toggleFilesInspector: "Toggle Files Inspector"
     case .toggleNotificationsInspector: "Toggle Notifications Inspector"
@@ -598,6 +601,9 @@ public enum AppShortcuts {
   public static let jumpToLatestUnread = AppShortcut(
     id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
   )
+  public static let showLastAgentMessage = AppShortcut(
+    id: .showLastAgentMessage, key: "i", modifiers: [.command, .control]
+  )
   public static let togglePullRequestInspector = AppShortcut(
     id: .togglePullRequestInspector, key: "g", modifiers: [.command, .option]
   )
@@ -691,7 +697,7 @@ public enum AppShortcuts {
       category: .actions,
       shortcuts: [
         openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
-        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread,
+        openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread, showLastAgentMessage,
         togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector,
       ]
     ),

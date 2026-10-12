@@ -853,8 +853,9 @@ private struct PaneTabStripe: View {
   }
 }
 
-/// The strip's trailing accessories: the exit-zoom button (zoomed panes only)
-/// and the new-tab menu carrying the splits and the window-mode toggle.
+/// The strip's trailing accessories: the exit-zoom button (zoomed panes only),
+/// the selected tab's content-provided button, and the new-tab menu carrying
+/// the splits and the window-mode toggle.
 private struct PaneTabStripAccessories: View {
   let pane: Pane
   let isZoomed: Bool
@@ -875,6 +876,16 @@ private struct PaneTabStripAccessories: View {
           action: toggleZoom
         )
       }
+      // Content actions may open main-window UI a pane window cannot show, so
+      // a windowed pane offers none, as it offers no splits or zoom.
+      if !isWindowed, let stripAction {
+        PaneTabStripAccessoryButton(
+          title: stripAction.title,
+          systemImage: stripAction.systemImage,
+          shortcut: stripAction.shortcut,
+          action: stripAction.perform
+        )
+      }
       PaneTabStripNewTabControl(
         canSplit: !isWindowed && selectedLiveContentID != nil,
         canZoom: canZoom,
@@ -893,6 +904,10 @@ private struct PaneTabStripAccessories: View {
 
   private var canZoom: Bool {
     !isWindowed && store.layout.tree.isSplit
+  }
+
+  private var stripAction: TabStripAction? {
+    pane.selectedTab.flatMap { runtime.content(for: $0.content.id)?.chrome?.stripAction }
   }
 
   private var selectedLiveContentID: ContentID? {

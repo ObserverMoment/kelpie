@@ -11,6 +11,7 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.toggleWindowModeAction) private var toggleWindowModeAction
   @FocusedValue(\.toggleSplitZoomAction) private var toggleSplitZoomAction
   @FocusedValue(\.equalizeSplitsAction) private var equalizeSplitsAction
+  @FocusedValue(\.showLastAgentMessageAction) private var showLastAgentMessageAction
   @FocusedValue(\.focusSplitAction) private var focusSplitAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
@@ -67,6 +68,12 @@ struct TerminalCommands: Commands {
       }
       .appKeyboardShortcut(AppShortcuts.equalizeSplits.effective(from: overrides))
       .disabled(equalizeSplitsAction?.isEnabled != true)
+
+      Button("Show Last Agent Message", systemImage: "envelope.open") {
+        showLastAgentMessageAction?()
+      }
+      .appKeyboardShortcut(AppShortcuts.showLastAgentMessage.effective(from: overrides))
+      .disabled(showLastAgentMessageAction?.isEnabled != true)
 
       Divider()
 
@@ -191,6 +198,10 @@ private struct ToggleSplitZoomActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct ShowLastAgentMessageActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct EqualizeSplitsActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -212,6 +223,11 @@ extension FocusedValues {
   var toggleSplitZoomAction: FocusedAction<Void>? {
     get { self[ToggleSplitZoomActionKey.self] }
     set { self[ToggleSplitZoomActionKey.self] = newValue }
+  }
+
+  var showLastAgentMessageAction: FocusedAction<Void>? {
+    get { self[ShowLastAgentMessageActionKey.self] }
+    set { self[ShowLastAgentMessageActionKey.self] = newValue }
   }
 
   var equalizeSplitsAction: FocusedAction<Void>? {

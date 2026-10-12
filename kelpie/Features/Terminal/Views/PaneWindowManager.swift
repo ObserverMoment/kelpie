@@ -96,14 +96,14 @@ enum PaneWindowShortcut {
       guard !event.isARepeat, isWorktreeSelected else { return .ignore }
       return isRunScript ? .runScript : .stopRunScripts
     }
-    // Splits, neighbor focus, zoom, and equalize are unavailable in a pane
-    // window; consume them so the menu cannot apply them to the selected
-    // worktree's layout instead.
+    // Splits, neighbor focus, zoom, equalize, and the last agent message are
+    // unavailable in a pane window; consume them so the menu cannot apply them
+    // to the selected worktree's layout instead.
     let unavailable = [
       AppShortcuts.splitRight, AppShortcuts.splitLeft, AppShortcuts.splitDown, AppShortcuts.splitUp,
       AppShortcuts.focusSplitLeft, AppShortcuts.focusSplitRight,
       AppShortcuts.focusSplitUp, AppShortcuts.focusSplitDown,
-      AppShortcuts.toggleSplitZoom, AppShortcuts.equalizeSplits,
+      AppShortcuts.toggleSplitZoom, AppShortcuts.equalizeSplits, AppShortcuts.showLastAgentMessage,
     ]
     if unavailable.contains(where: matched) {
       return .ignore
@@ -616,6 +616,7 @@ private struct WindowedPaneRootView: View {
         .focusedAction(\.focusSplitAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
         .focusedAction(\.toggleSplitZoomAction, enabled: false) {}
         .focusedAction(\.equalizeSplitsAction, enabled: false) {}
+        .focusedAction(\.showLastAgentMessageAction, enabled: false) {}
         .focusedSceneAction(\.toggleWindowModeAction, enabled: true, token: paneID.rawValue) {
           guard windowIsKey() else { return }
           store.send(.exitWindowMode(paneID: paneID))

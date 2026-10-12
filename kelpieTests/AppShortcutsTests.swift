@@ -205,6 +205,10 @@ struct AppShortcutsTests {
     #expect(decoded?.codingKey.stringValue == "toggleWindowMode")
   }
 
+  @Test func showLastAgentMessageShortcutHasNoDefaultConflict() {
+    #expect(AppShortcuts.conflictWarnings(from: [:])[.showLastAgentMessage] == nil)
+  }
+
   @Test func toggleWindowModeShortcutHasNoDefaultConflict() {
     #expect(AppShortcuts.conflictWarnings(from: [:])[.toggleWindowMode] == nil)
   }
@@ -597,6 +601,15 @@ struct PaneWindowShortcutTests {
     let repeated = Self.keyEvent(keyCode: kVK_ANSI_W, modifiers: .command, isARepeat: true)
     #expect(
       PaneWindowShortcut.intent(for: repeated, pane: pane, overrides: [:], isWorktreeSelected: true)
+        == .ignore
+    )
+  }
+
+  @Test func lastAgentMessageIsConsumedInAPaneWindow() {
+    let pane = Self.pane(tabs: [Self.tab()])
+    let event = Self.keyEvent(keyCode: kVK_ANSI_I, modifiers: [.command, .control])
+    #expect(
+      PaneWindowShortcut.intent(for: event, pane: pane, overrides: [:], isWorktreeSelected: true)
         == .ignore
     )
   }

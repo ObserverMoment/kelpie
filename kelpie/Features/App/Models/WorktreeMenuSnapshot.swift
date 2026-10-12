@@ -143,7 +143,7 @@ extension AppFeature.Action {
       .openWorktree, .openWorktreeFailed, .openFile, .openFileFromExplorer, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
-      .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom,
+      .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom, .showLastAgentMessage,
       .equalizeSplits, .focusSplit, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,

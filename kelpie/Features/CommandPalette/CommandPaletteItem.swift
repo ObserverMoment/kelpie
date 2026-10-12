@@ -214,8 +214,8 @@ struct CommandPaletteItem: Identifiable, Equatable {
   }
 }
 
-/// The app-owned layout commands the palette offers in place of Ghostty's
-/// topology entries.
+/// The app-owned commands on the focused pane and tab: the topology entries
+/// the palette offers in place of Ghostty's, plus the last agent message.
 enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   case newTerminalTab = "new-terminal-tab"
   case closeTab = "close-tab"
@@ -229,6 +229,7 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
   case focusSplitUp = "focus-split-up"
   case toggleSplitZoom = "toggle-split-zoom"
   case equalizeSplits = "equalize-splits"
+  case showLastAgentMessage = "show-last-agent-message"
 
   var title: String {
     switch self {
@@ -244,6 +245,7 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .focusSplitUp: "Focus Split Up"
     case .toggleSplitZoom: "Toggle Split Zoom"
     case .equalizeSplits: "Equalize Splits"
+    case .showLastAgentMessage: "Show Last Agent Message"
     }
   }
 
@@ -262,6 +264,7 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .focusSplitUp: "arrow.up"
     case .toggleSplitZoom: "arrow.up.left.and.arrow.down.right"
     case .equalizeSplits: "rectangle.split.2x1"
+    case .showLastAgentMessage: "envelope.open"
     }
   }
 
@@ -280,6 +283,7 @@ enum LayoutPaletteCommand: String, CaseIterable, Equatable, Sendable {
     case .focusSplitUp: AppShortcuts.focusSplitUp
     case .toggleSplitZoom: AppShortcuts.toggleSplitZoom
     case .equalizeSplits: AppShortcuts.equalizeSplits
+    case .showLastAgentMessage: AppShortcuts.showLastAgentMessage
     }
   }
 }

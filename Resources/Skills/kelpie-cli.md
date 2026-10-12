@@ -144,6 +144,7 @@ kelpie tab new [-w <id>] [-i <cmd>] [-n <uuid>] [--title <title>] [-p <pane-toke
 kelpie tab rename [-w <id>] [-t <id>] --title <title>             # Rename tab (empty title clears override; script tabs are locked).
 kelpie tab move [-w <id>] [-t <id>] -d l|r|u|d [--background]     # Move a tab into a new split.
 kelpie tab close [-w <id>] [-t <id>] [--background]               # Close tab.
+kelpie tab last-message [-w <id>] [-t <id>]                       # Show the tab's newest agent message full-window. Alerts if there is none or the pane is windowed.
 ```
 
 ### Surface (deprecated)

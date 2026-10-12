@@ -45,6 +45,8 @@ enum Deeplink: Equatable, Sendable {
     case tabDestroy(tabID: UUID)
     /// Moves a tab into a fresh split neighboring its current pane.
     case tabMove(tabID: UUID, direction: TerminalSplitMenuDirection)
+    /// Open the tab's newest Mailbox message full-window.
+    case tabLastMessage(tabID: UUID)
     /// Focus the pane resolved from a token (its own id, or a tab / content it hosts).
     case paneFocus(token: UUID)
     /// Move focus to the pane neighboring the focused one.
@@ -63,9 +65,10 @@ enum Deeplink: Equatable, Sendable {
 
     /// Whether dispatching this action should also select / focus the worktree.
     /// Metadata-only updates (appearance, tab rename) skip it so they don't steal focus.
+    /// The last-message action selects the worktree only once it has a message to show.
     var selectsWorktree: Bool {
       switch self {
-      case .appearance, .tabRename: false
+      case .appearance, .tabRename, .tabLastMessage: false
       default: true
       }
     }

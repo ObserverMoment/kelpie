@@ -11,6 +11,7 @@ struct TabCommand: ParsableCommand {
       New.self,
       Rename.self,
       Move.self,
+      LastMessage.self,
       Close.self,
     ],
     defaultSubcommand: Focus.self
@@ -189,6 +190,29 @@ extension TabCommand {
       try Dispatcher.dispatch(
         deeplinkURL: backgroundOption.applied(
           to: DeeplinkURLBuilder.tabClose(worktreeID: wID, tabID: tID)),
+        timeoutSeconds: timeoutOption.timeout
+      )
+    }
+  }
+
+  struct LastMessage: ParsableCommand {
+    static let configuration = CommandConfiguration(
+      commandName: "last-message",
+      abstract: "Show a tab's newest agent message full-window. Alerts if there is none or the pane is windowed.")
+
+    @Option(name: [.short, .long], help: "Worktree ID. Defaults to the focused worktree.")
+    var worktree: String?
+
+    @Option(name: [.short, .long], help: "Tab ID. Defaults to the focused tab.")
+    var tab: String?
+
+    @OptionGroup var timeoutOption: TimeoutOption
+
+    func run() throws {
+      let wID = try IDResolvers.resolveFocusedWorktreeID(worktree, timeoutSeconds: timeoutOption.timeout)
+      let tID = try IDResolvers.resolveFocusedTabID(tab, worktreeID: wID, timeoutSeconds: timeoutOption.timeout)
+      try Dispatcher.dispatch(
+        deeplinkURL: DeeplinkURLBuilder.tabLastMessage(worktreeID: wID, tabID: tID),
         timeoutSeconds: timeoutOption.timeout
       )
     }

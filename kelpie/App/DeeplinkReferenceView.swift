@@ -106,6 +106,10 @@ struct DeeplinkReferenceView: View {
       url: "kelpie://worktree/<worktree_id>/tab/<tab_id>/destroy",
       description: "Close a tab."
     ),
+    .init(
+      url: "kelpie://worktree/<worktree_id>/tab/<tab_id>/last-message",
+      description: "Show the tab's newest agent message full-window. Alerts if there is none or the pane is windowed."
+    ),
   ]
 
   private static let paneRows: [DeeplinkEntry] = [

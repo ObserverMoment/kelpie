@@ -62,6 +62,10 @@ nonisolated enum DeeplinkURLBuilder {
     "kelpie://worktree/\(worktreeID)/tab/\(tabID)/destroy"
   }
 
+  static func tabLastMessage(worktreeID: String, tabID: String) -> String {
+    "kelpie://worktree/\(worktreeID)/tab/\(tabID)/last-message"
+  }
+
   // MARK: - Surface.
 
   static func surfaceFocus(worktreeID: String, tabID: String, surfaceID: String, input: String?) -> String {

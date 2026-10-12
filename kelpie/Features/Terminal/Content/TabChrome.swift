@@ -22,6 +22,22 @@ protocol TabChrome: AnyObject {
   /// second, so it lives here rather than as a layout reducer action, and only
   /// one tab's label re-renders on a report.
   var reportedTitle: String? { get }
+  /// A button the content adds to its pane's strip while its tab is selected.
+  var stripAction: TabStripAction? { get }
+}
+
+extension TabChrome {
+  var stripAction: TabStripAction? { nil }
+}
+
+/// A content-provided strip button; the strip renders it with the shortcut in
+/// its tooltip and runs `perform` on click.
+@MainActor
+struct TabStripAction {
+  let title: String
+  let systemImage: String
+  let shortcut: AppShortcut
+  let perform: () -> Void
 }
 
 /// Resolves what a tab shows, and what the layout should persist for it, from
@@ -61,6 +77,17 @@ final class TerminalTabChrome: TabChrome {
 
   /// Unread messages in the pane's mailbox; `MailboxFeature` owns the count.
   var unreadMail = 0
+  /// The pane's mailbox holds at least one message, read or not.
+  var hasMail = false
+  /// Opens the pane's newest message; installed when the content is built.
+  @ObservationIgnored var showLastMessage: (() -> Void)?
+
+  var stripAction: TabStripAction? {
+    guard hasMail, let showLastMessage else { return nil }
+    return TabStripAction(
+      title: "Show Last Agent Message", systemImage: "envelope.open",
+      shortcut: AppShortcuts.showLastAgentMessage, perform: showLastMessage)
+  }
 
   var accessory: AnyView? {
     guard !agents.isEmpty || unreadMail > 0 else { return nil }

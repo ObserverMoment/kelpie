@@ -68,6 +68,89 @@ struct MailboxFeatureTests {
     #expect(store.state.file.boxes[id: surface]?.messages.map(\.body) == ["a"])
   }
 
+  @Test(.dependencies) func latestMessageOpensNewestAndClosesToThePane() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: UUID(), "elsewhere")
+    await Self.deliver(store, surface: surface, "old")
+    await Self.deliver(store, surface: surface, "new")
+    let newest = store.state.file.boxes[id: surface]!.messages[0].id
+
+    await store.send(.lastMessageOpened(surfaceID: surface))
+    #expect(store.state.selectedSurfaceID == surface)
+    #expect(store.state.openMessageID == newest)
+    #expect(store.state.openMessage?.isRead == true)
+    #expect(store.state.file.boxes[id: surface]?.unreadCount == 1)
+    #expect(store.state.viewerReturnsToPane)
+
+    await store.send(.viewerClosed)
+    await store.receive(.delegate(.closedToPane(worktreeID: Self.worktreeID, surfaceID: surface)))
+    #expect(store.state.openMessageID == nil)
+    #expect(!store.state.viewerReturnsToPane)
+    // Closing keeps the mail: only the opened message turned read.
+    #expect(store.state.file.boxes[id: surface]?.messages.map(\.body) == ["new", "old"])
+    #expect(store.state.file.boxes[id: surface]?.messages.map(\.isRead) == [true, false])
+  }
+
+  @Test(.dependencies) func latestMessageIsANoOpWithoutMail() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await store.send(.lastMessageOpened(surfaceID: surface))
+    #expect(store.state.openMessageID == nil)
+
+    await Self.deliver(store, surface: surface, "only")
+    let id = store.state.file.boxes[id: surface]!.messages[0].id
+    await store.send(.markDone(id))
+    await store.send(.lastMessageOpened(surfaceID: surface))
+    #expect(store.state.openMessageID == nil)
+    #expect(!store.state.viewerReturnsToPane)
+  }
+
+  @Test(.dependencies) func doneInAPaneViewerReturnsToThePane() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "a")
+    await Self.deliver(store, surface: surface, "b")
+    await store.send(.lastMessageOpened(surfaceID: surface))
+    let newest = store.state.openMessageID!
+
+    await store.send(.markDone(newest))
+    await store.receive(.delegate(.closedToPane(worktreeID: Self.worktreeID, surfaceID: surface)))
+    #expect(store.state.file.boxes[id: surface]?.messages.map(\.body) == ["a"])
+    #expect(!store.state.viewerReturnsToPane)
+  }
+
+  @Test(.dependencies) func openingFromTheInboxClosesToTheInbox() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "hello")
+    await store.send(.lastMessageOpened(surfaceID: surface))
+    let id = store.state.openMessageID!
+
+    await store.send(.messageOpened(id))
+    #expect(!store.state.viewerReturnsToPane)
+    store.exhaustivity = .on
+    await store.send(.viewerClosed) { $0.openMessageID = nil }
+  }
+
+  @Test(.dependencies) func overlayDismissClosesOnlyAPaneViewer() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "hello")
+    let id = store.state.file.boxes[id: surface]!.messages[0].id
+
+    await store.send(.lastMessageOpened(surfaceID: surface))
+    await store.send(.overlayDismissed)
+    await store.receive(.delegate(.closedToPane(worktreeID: Self.worktreeID, surfaceID: surface)))
+    #expect(store.state.openMessageID == nil)
+    #expect(store.state.file.boxes[id: surface]?.messages.count == 1)
+    #expect(!store.state.viewerReturnsToPane)
+
+    await store.send(.messageOpened(id))
+    await store.send(.overlayDismissed)
+    #expect(store.state.openMessageID == id)
+  }
+
   @Test(.dependencies) func replyFlagsMessageAndDelegatesQuote() async {
     let store = Self.makeStore()
     let surface = UUID()
@@ -146,5 +229,26 @@ struct MailboxFeatureTests {
     #expect(state.selectedSurfaceID == second)
     state.applyStructure(MailboxStructure(rows: [row(first)]))
     #expect(state.selectedSurfaceID == first)
+  }
+}
+
+@MainActor
+struct TerminalTabChromeMailTests {
+  @Test func stripActionNeedsMailAndAWiredHandler() {
+    let chrome = TerminalTabChrome()
+    #expect(chrome.stripAction == nil)
+
+    chrome.hasMail = true
+    #expect(chrome.stripAction == nil)
+
+    let opened = LockIsolated(0)
+    chrome.showLastMessage = { opened.withValue { $0 += 1 } }
+    let action = chrome.stripAction
+    #expect(action?.shortcut.id == AppShortcuts.showLastAgentMessage.id)
+    action?.perform()
+    #expect(opened.value == 1)
+
+    chrome.hasMail = false
+    #expect(chrome.stripAction == nil)
   }
 }

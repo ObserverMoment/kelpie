@@ -394,6 +394,9 @@ struct KelpieApp: App {
       environmentExtras: { [weak terminalManager] request in
         terminalManager?.hostIfExists(for: request.worktreeID)?
           .blockingScriptEnvironment(for: request.tabID) ?? [:]
+      },
+      showLastMessage: { [weak terminalManager] contentID in
+        terminalManager?.appStore?.send(.showLastAgentMessage(surfaceID: contentID.rawValue))
       }
     ).factory()
   }

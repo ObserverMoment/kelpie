@@ -361,6 +361,7 @@ struct WorktreeDetailView: View {
     // which act on the selected worktree, are off while it is up.
     let isPodWorkspace = state.fleetView.isShowingPodWorkspace
     let actsOnLayout = hasActiveWorktree && !isPodWorkspace
+    let focusedSurfaceHasMail = state.focusedSurfaceHasMail
     return
       content
       // Open is enabled only when the resolved editor can open the selection
@@ -390,6 +391,9 @@ struct WorktreeDetailView: View {
       }
       .focusedAction(\.toggleSplitZoomAction, enabled: actsOnLayout) {
         store.send(.toggleSplitZoom)
+      }
+      .focusedAction(\.showLastAgentMessageAction, enabled: actsOnLayout && focusedSurfaceHasMail) {
+        store.send(.showLastAgentMessage(surfaceID: nil))
       }
       .focusedAction(\.equalizeSplitsAction, enabled: actsOnLayout) {
         store.send(.equalizeSplits)

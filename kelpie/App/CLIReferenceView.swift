@@ -130,6 +130,10 @@ struct CLIReferenceView: View {
       description: "Move a tab into a new split in the given direction."
     ),
     .init(command: "kelpie tab close [-w <id>] [-t <id>]", description: "Close a tab."),
+    .init(
+      command: "kelpie tab last-message [-w <id>] [-t <id>]",
+      description: "Show the tab's newest agent message full-window. Alerts if there is none or the pane is windowed."
+    ),
   ]
 
   private static let surfaceRows: [CLIEntry] = [

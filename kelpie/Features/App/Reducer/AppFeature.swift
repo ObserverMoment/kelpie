@@ -246,6 +246,23 @@ struct AppFeature {
     var hasRunningRunScript: Bool {
       allScripts.hasRunningRunScript(in: runningScriptIDs)
     }
+
+    /// The selected worktree's focused pane's visible content: the surface
+    /// pane-level commands act on. Nil for a pane in its own window, which
+    /// cannot show the main window's overlay.
+    var focusedSurfaceID: UUID? {
+      guard let worktreeID = repositories.selectedWorktreeID,
+        let layoutState = terminals.layouts[id: worktreeID],
+        let paneID = layoutState.layout.focusedPaneID,
+        !layoutState.windowedPaneIDs.contains(paneID)
+      else { return nil }
+      return layoutState.layout.panes[id: paneID]?.selectedTab?.content.id.rawValue
+    }
+
+    /// Whether the focused pane has a message to show.
+    var focusedSurfaceHasMail: Bool {
+      focusedSurfaceID.map(mailbox.file.hasMail(for:)) ?? false
+    }
   }
 
   /// A CLI socket command whose response is held open until the operation
@@ -330,6 +347,9 @@ struct AppFeature {
     case toggleWindowModeForFocusedPane
     case toggleSplitZoom
     case equalizeSplits
+    /// Opens a pane's newest Mailbox message full-window; `nil` means the
+    /// focused pane. No-op when the pane has no mail.
+    case showLastAgentMessage(surfaceID: UUID?)
     case focusSplit(TerminalSplitMenuDirection)
     case selectTerminalTabAtIndex(Int)
     case selectNextTerminalTab
@@ -1127,6 +1147,17 @@ struct AppFeature {
           await terminalClient.send(.toggleWindowModeForFocusedPane(worktree))
         }
 
+      case .showLastAgentMessage(let surfaceID):
+        guard let surfaceID = surfaceID ?? state.focusedSurfaceID,
+          state.mailbox.file.hasMail(for: surfaceID)
+        else { return .none }
+        let showsMailbox = state.fleetView.isPresented && state.fleetView.mode == .mailbox
+        // Present first, so the launcher seeding arm runs before the message opens.
+        return .concatenate(
+          showsMailbox ? .none : .send(.fleetView(.toggleMailbox)),
+          .send(.mailbox(.lastMessageOpened(surfaceID: surfaceID)))
+        )
+
       case .toggleSplitZoom:
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
           !worktree.isMissing
@@ -1709,6 +1740,7 @@ struct AppFeature {
         return .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
 
       case .fleetView(.delegate(.openSession(let worktreeID, let tabID, let surfaceID))):
+        state.mailbox.dropPaneViewer()
         guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
         // Same shape as jump-to-unread: `focusSurface` carries the worktree, so it
         // needn't wait for the selection to land.
@@ -1720,6 +1752,7 @@ struct AppFeature {
         )
 
       case .fleetView(.delegate(.launch(let worktreeID, let command))):
+        state.mailbox.dropPaneViewer()
         guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
         let shouldRunSetupScript =
           state.repositories.sidebarItems[id: worktreeID]?.lifecycle == .pending
@@ -1733,14 +1766,11 @@ struct AppFeature {
         )
 
       case .fleetView(.delegate(.dismissed)):
-        // Mirror the palette: a cancel carries no destination, so refocus the
-        // selected worktree's terminal.
-        guard let worktreeID = state.repositories.selectedWorktreeID,
-          state.repositories.sidebarItems[id: worktreeID] != nil
-        else { return .none }
-        return .send(
-          .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
-        )
+        // A message opened from a pane closes back to that pane.
+        if state.mailbox.viewerReturnsToPane {
+          return .send(.mailbox(.overlayDismissed))
+        }
+        return refocusSelectedTerminal(state: state)
 
       case .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleMailbox):
         // Seed the launcher with the selected worktree before the child opens
@@ -1780,34 +1810,23 @@ struct AppFeature {
         return .none
 
       case .mailbox(.delegate(.reply(let worktreeID, let surfaceID, let text))):
-        guard let worktree = state.repositories.worktree(for: worktreeID),
-          let tabID = state.terminals.layouts[id: worktreeID]?.layout
-            .tab(containingContent: ContentID(rawValue: surfaceID))?.tab.id
-        else { return .none }
-        // Straight to the pane, like opening a Fleet card: the overlay closes
-        // and the quote lands at the prompt without a Return.
-        state.fleetView.isPresented = false
-        return .merge(
-          .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
-          .run { _ in
-            await terminalClient.send(
-              .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: text, submitsInput: false))
-          }
-        )
+        // The quote lands at the prompt without a Return.
+        return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, input: text, state: &state)
+
+      case .mailbox(.delegate(.closedToPane(let worktreeID, let surfaceID))):
+        // Back to the origin pane, unless the user moved to another worktree
+        // under the overlay; then stay there.
+        guard worktreeID == state.repositories.selectedWorktreeID else {
+          state.fleetView.isPresented = false
+          return refocusSelectedTerminal(state: state)
+        }
+        return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, input: nil, state: &state)
 
       case .mailbox:
         return .none
 
       case .commandPalette(.delegate(.dismissedWithoutSelection)):
-        // Always-focused-terminal invariant. Cancellation paths (Esc, outside
-        // tap, programmatic close) don't carry a destination; refocus the
-        // current worktree's terminal so the cursor never lingers nowhere.
-        guard let worktreeID = state.repositories.selectedWorktreeID,
-          state.repositories.sidebarItems[id: worktreeID] != nil
-        else { return .none }
-        return .send(
-          .repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested)))
-        )
+        return refocusSelectedTerminal(state: state)
 
       case .commandPalette(.delegate(.toggleWindowMode)):
         return .send(.toggleWindowModeForFocusedPane)
@@ -1838,6 +1857,8 @@ struct AppFeature {
           return .send(.toggleSplitZoom)
         case .equalizeSplits:
           return .send(.equalizeSplits)
+        case .showLastAgentMessage:
+          return .send(.showLastAgentMessage(surfaceID: nil))
         }
 
       case .commandPalette(.delegate(.checkForUpdates)):
@@ -2287,12 +2308,13 @@ struct AppFeature {
       return .none
     }
     Reduce { state, action in
-      // Unread-mail badges live on each pane's chrome (content-side state, per
-      // CLAUDE.md), so write them whenever a mailbox action lands and once for
-      // panes rehydrated after launch.
+      // The unread badge and has-mail flag live on each pane's chrome
+      // (content-side state, per CLAUDE.md), so write them whenever a mailbox
+      // action lands, and again after a hydrate or a wake (a relaunch or zmx
+      // reattach rebuilds the content with blank chrome).
       switch action {
       case .mailbox: break
-      case .terminals(.layoutsHydrated): break
+      case .terminals(.layoutsHydrated), .terminals(.layouts(.element(_, .wakeTab))): break
       default: return .none
       }
       let boxes = state.mailbox.file.boxes
@@ -2491,13 +2513,47 @@ struct AppFeature {
     }
   }
 
+  /// Always-focused-terminal invariant. Cancellation paths (Esc, outside tap,
+  /// programmatic close) don't carry a destination; refocus the current
+  /// worktree's terminal so the cursor never lingers nowhere.
+  private func refocusSelectedTerminal(state: State) -> Effect<Action> {
+    guard let worktreeID = state.repositories.selectedWorktreeID,
+      state.repositories.sidebarItems[id: worktreeID] != nil
+    else { return .none }
+    return .send(.repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested))))
+  }
+
+  /// Straight to a mailbox's pane, like opening a Fleet card: the overlay
+  /// closes and the pane takes focus, with `input` typed but not submitted.
+  private func openMailPane(
+    worktreeID: Worktree.ID, surfaceID: UUID, input: String?, state: inout State
+  ) -> Effect<Action> {
+    guard let worktree = state.repositories.worktree(for: worktreeID),
+      let tabID = state.terminals.layouts[id: worktreeID]?.layout
+        .tab(containingContent: ContentID(rawValue: surfaceID))?.tab.id
+    else { return .none }
+    state.fleetView.isPresented = false
+    return .merge(
+      .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
+      .run { _ in
+        await terminalClient.send(
+          .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: input, submitsInput: false))
+      }
+    )
+  }
+
   private func writeMailChrome(for surfaceIDs: some Sequence<UUID>, boxes: IdentifiedArrayOf<Mailbox>) {
     for surfaceID in surfaceIDs {
       guard
         let chrome = contentRuntime.content(for: ContentID(rawValue: surfaceID))?.chrome
           as? TerminalTabChrome
       else { continue }
-      chrome.unreadMail = boxes[id: surfaceID]?.unreadCount ?? 0
+      // Equal writes still notify observers; skip them so one pane's mail
+      // does not re-render every strip.
+      let unread = boxes[id: surfaceID]?.unreadCount ?? 0
+      if chrome.unreadMail != unread { chrome.unreadMail = unread }
+      let hasMail = boxes[id: surfaceID]?.messages.isEmpty == false
+      if chrome.hasMail != hasMail { chrome.hasMail = hasMail }
     }
   }
 
@@ -2847,7 +2903,7 @@ struct AppFeature {
       spawnsShell = true
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
-    case .select, .stop, .stopScript, .tab, .tabRename, .tabDestroy, .surfaceDestroy,
+    case .select, .stop, .stopScript, .tab, .tabRename, .tabDestroy, .tabLastMessage, .surfaceDestroy,
       .archive, .unarchive, .delete, .pin, .unpin, .appearance,
       .tabMove, .paneFocus, .paneFocusDirection, .paneDestroy, .paneZoom, .paneWindow, .paneEqualize:
       spawnsShell = false
@@ -3118,6 +3174,31 @@ struct AppFeature {
       return awaitingCompletion(
         effect, match: .tabRemoved(worktreeID: worktreeID, tabID: TabID(rawValue: tabID)),
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .tabLastMessage(let tabID):
+      guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }
+      let tab = TabID(rawValue: tabID)
+      let layoutState = state.terminals.layouts[id: worktreeID]
+      let pane = layoutState?.layout.pane(containingTab: tab)
+      guard let surfaceID = pane?.tabs[id: tab]?.content.id.rawValue, state.mailbox.file.hasMail(for: surfaceID)
+      else {
+        deeplinkLogger.warning("Tab \(tabID) has no Mailbox message in worktree \(worktreeID)")
+        state.alert = lastAgentMessageAlert(
+          title: "No agent message", message: "This tab has no message in its Mailbox.")
+        return .none
+      }
+      // A pane window cannot show the main window's overlay, as with the hotkey.
+      if let pane, layoutState?.windowedPaneIDs.contains(pane.id) == true {
+        deeplinkLogger.warning("Tab \(tabID) is in a pane window in worktree \(worktreeID)")
+        state.alert = lastAgentMessageAlert(
+          title: "Tab is in a pane window", message: "Move the tab back to the main window to show its message.")
+        return .none
+      }
+      // Select only once there is a message to show, so a refusal leaves the
+      // user where they were and closing returns to this tab.
+      return .concatenate(
+        .send(.repositories(.selectWorktree(worktreeID))),
+        .send(.showLastAgentMessage(surfaceID: surfaceID))
+      )
     case .surface(let tabID, let surfaceID, let input):
       guard validateSurface(worktreeID: worktreeID, tabID: tabID, surfaceID: surfaceID, state: &state) else {
         return .none
@@ -3454,6 +3535,18 @@ struct AppFeature {
   private func blankTabTitleAlert(message: String) -> AlertState<Alert> {
     AlertState {
       TextState("Tab title is blank")
+    } actions: {
+      ButtonState(role: .cancel, action: .dismiss) {
+        TextState("OK")
+      }
+    } message: {
+      TextState(message)
+    }
+  }
+
+  private func lastAgentMessageAlert(title: String, message: String) -> AlertState<Alert> {
+    AlertState {
+      TextState(title)
     } actions: {
       ButtonState(role: .cancel, action: .dismiss) {
         TextState("OK")

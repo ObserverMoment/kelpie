@@ -36,6 +36,11 @@ nonisolated struct MailboxesFile: Equatable, Codable, Sendable {
 
   var unreadCount: Int { boxes.reduce(0) { $0 + $1.unreadCount } }
 
+  /// The surface's inbox holds at least one message, read or not.
+  func hasMail(for surfaceID: UUID) -> Bool {
+    boxes[id: surfaceID]?.messages.isEmpty == false
+  }
+
   /// Latest message per surface, for the Fleet card excerpt.
   var latestBodyBySurface: [UUID: String] {
     boxes.reduce(into: [:]) { $0[$1.surfaceID] = $1.latestBody }

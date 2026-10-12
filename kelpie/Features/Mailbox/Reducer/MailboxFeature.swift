@@ -15,6 +15,9 @@ struct MailboxFeature {
     var selectedSurfaceID: UUID?
     /// The message shown full-window, if any.
     var openMessageID: MailMessage.ID?
+    /// The message last opened from its pane rather than the inbox. Closing
+    /// it leaves the overlay for that pane instead of going back to the inbox.
+    var paneOpenedMessageID: MailMessage.ID?
     /// Surfaces whose tab chrome last carried an unread-mail badge, so a box
     /// that empties or closes gets its badge cleared.
     var badgedSurfaceIDs: Set<UUID> = []
@@ -30,6 +33,17 @@ struct MailboxFeature {
     var openMessage: MailMessage? {
       guard let openMessageID else { return nil }
       return selectedBox?.messages.first { $0.id == openMessageID }
+    }
+
+    /// Closing the open message goes back to its pane, not the inbox.
+    var viewerReturnsToPane: Bool { openMessageID != nil && openMessageID == paneOpenedMessageID }
+
+    /// The overlay left for another session or a launch: a viewer opened from
+    /// a pane must not reappear, pointing at that pane, on the next open.
+    mutating func dropPaneViewer() {
+      guard viewerReturnsToPane else { return }
+      openMessageID = nil
+      paneOpenedMessageID = nil
     }
 
     /// Stores a freshly computed structure when it changed and keeps the
@@ -48,7 +62,13 @@ struct MailboxFeature {
     case sessionSelected(UUID?)
     /// Shows the message full-window and marks it read.
     case messageOpened(MailMessage.ID)
+    /// Opens a pane's newest message, closing back to that pane. No-op when
+    /// the pane has no mail.
+    case lastMessageOpened(surfaceID: UUID)
     case viewerClosed
+    /// The overlay closed: a viewer opened from a pane closes with it, so the
+    /// inbox shows next time.
+    case overlayDismissed
     /// The tick: the message leaves the inbox.
     case markDone(MailMessage.ID)
     /// Stages a reply in the pane; the message stays, flagged, until the prompt
@@ -65,6 +85,8 @@ struct MailboxFeature {
   enum Delegate: Equatable {
     /// Open the pane and insert `text` at the prompt, without submitting.
     case reply(worktreeID: Worktree.ID, surfaceID: UUID, text: String)
+    /// A viewer opened from a pane closed: leave the overlay for that pane.
+    case closedToPane(worktreeID: Worktree.ID, surfaceID: UUID)
   }
 
   @Dependency(\.uuid) private var uuid
@@ -92,19 +114,25 @@ struct MailboxFeature {
 
       case .messageOpened(let messageID):
         guard let surfaceID = state.file.surfaceID(containing: messageID) else { return .none }
-        state.selectedSurfaceID = surfaceID
-        state.openMessageID = messageID
-        state.$file.withLock { $0.update(messageID) { $0.isRead = true } }
+        Self.open(messageID, surfaceID: surfaceID, fromPane: false, state: &state)
+        return .none
+
+      case .lastMessageOpened(let surfaceID):
+        guard let newest = state.file.boxes[id: surfaceID]?.messages.first else { return .none }
+        Self.open(newest.id, surfaceID: surfaceID, fromPane: true, state: &state)
         return .none
 
       case .viewerClosed:
-        state.openMessageID = nil
-        return .none
+        return Self.closeViewer(state: &state)
+
+      case .overlayDismissed:
+        guard state.viewerReturnsToPane else { return .none }
+        return Self.closeViewer(state: &state)
 
       case .markDone(let messageID):
-        if state.openMessageID == messageID { state.openMessageID = nil }
+        let effect = state.openMessageID == messageID ? Self.closeViewer(state: &state) : .none
         state.$file.withLock { $0.remove(messageID) }
-        return .none
+        return effect
 
       case .replyTapped(let messageID):
         guard let surfaceID = state.file.surfaceID(containing: messageID),
@@ -141,6 +169,26 @@ struct MailboxFeature {
         return .none
       }
     }
+  }
+
+  /// Shows a message full-window and marks it read.
+  private static func open(
+    _ messageID: MailMessage.ID, surfaceID: UUID, fromPane: Bool, state: inout State
+  ) {
+    state.selectedSurfaceID = surfaceID
+    state.openMessageID = messageID
+    state.paneOpenedMessageID = fromPane ? messageID : nil
+    state.$file.withLock { $0.update(messageID) { $0.isRead = true } }
+  }
+
+  /// Back to the inbox, or out of the overlay to the pane the viewer was
+  /// opened from.
+  private static func closeViewer(state: inout State) -> Effect<Action> {
+    let returnsToPane = state.viewerReturnsToPane
+    state.openMessageID = nil
+    state.paneOpenedMessageID = nil
+    guard returnsToPane, let box = state.selectedBox else { return .none }
+    return .send(.delegate(.closedToPane(worktreeID: box.worktreeID, surfaceID: box.surfaceID)))
   }
 
   private static func removeBoxes(_ surfaceIDs: Set<UUID>, state: inout State) -> Effect<Action> {
