@@ -86,9 +86,9 @@ private struct PodCandidateRow: View {
       .help(candidate.disabledReason ?? "Add this session to the pod")
       if let draft, draft.isSelected {
         TextField(
-          "Member name", text: Binding(get: { draft.name }, set: onNameChange), prompt: Text("Frontend agent"))
+          "Member name", text: Binding(get: { draft.name }, set: { onNameChange($0) }), prompt: Text("Frontend agent"))
         TextField(
-          "Member description", text: Binding(get: { draft.description }, set: onDescriptionChange),
+          "Member description", text: Binding(get: { draft.description }, set: { onDescriptionChange($0) }),
           prompt: Text("Optional: what this agent works on"))
       }
     }

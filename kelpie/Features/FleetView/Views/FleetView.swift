@@ -13,7 +13,7 @@ struct FleetView: View {
   let terminalsStore: StoreOf<TerminalsFeature>
   let runtime: ContentRuntime
 
-  private static let horizontalPadding: CGFloat = 32
+  private nonisolated static let horizontalPadding: CGFloat = 32
 
   /// The one glyph used by the header, the toolbar button and the Sidebar menu item.
   static let symbolName = "square.grid.2x2"

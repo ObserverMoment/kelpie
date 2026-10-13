@@ -3,7 +3,7 @@ import Foundation
 /// Pure keyboard geometry for the Fleet View and Pods grids. Sections are rows of
 /// cards wrapped at `columnCount`; left/right walk the flattened order, up/down
 /// step by a row and cross section boundaries.
-enum FleetViewNavigation {
+nonisolated enum FleetViewNavigation {
   enum Direction: Equatable, Sendable {
     case left, right, up, down
   }

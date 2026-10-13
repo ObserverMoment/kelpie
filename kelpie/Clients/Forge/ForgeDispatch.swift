@@ -66,9 +66,9 @@ nonisolated enum ForgeDispatch {
       )
       return nil
     }
-    await send(.showToast(.inProgress(copy.inProgressToast)))
+    send(.showToast(.inProgress(copy.inProgressToast)))
     guard let run = try await forge.latestRun(worktreeRoot, branchName) else {
-      await send(.dismissToast)
+      send(.dismissToast)
       await send(
         .presentAlert(
           title: "No workflow runs found",
@@ -78,7 +78,7 @@ nonisolated enum ForgeDispatch {
       return nil
     }
     guard run.conclusion?.lowercased() == "failure" else {
-      await send(.dismissToast)
+      send(.dismissToast)
       await send(
         .presentAlert(
           title: "No failing workflow run",

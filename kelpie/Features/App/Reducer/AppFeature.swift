@@ -455,7 +455,7 @@ struct AppFeature {
           .run { @MainActor send in
             guard startupHotkey != nil else { return }
             if !appLifecycleClient.updateGlobalHotkey(startupHotkey) {
-              await send(.settings(.setGlobalHotkeyRegistrationFailed(true)))
+              send(.settings(.setGlobalHotkeyRegistrationFailed(true)))
             }
           },
           .run { _ in
@@ -921,7 +921,7 @@ struct AppFeature {
               // refused policy switch would leave no surface at all. Fall back
               // to the previous mode, which puts one of them back.
               guard appLifecycleClient.applyVisibility(settings.appVisibility) else {
-                await send(.settings(.setAppVisibility(previousVisibility)))
+                send(.settings(.setAppVisibility(previousVisibility)))
                 return
               }
               if dockIconReappeared {
@@ -934,7 +934,7 @@ struct AppFeature {
           effects.append(
             .run { @MainActor send in
               let succeeded = appLifecycleClient.updateGlobalHotkey(newGlobalHotkey)
-              await send(.settings(.setGlobalHotkeyRegistrationFailed(newGlobalHotkey != nil && !succeeded)))
+              send(.settings(.setGlobalHotkeyRegistrationFailed(newGlobalHotkey != nil && !succeeded)))
             }
           )
         }

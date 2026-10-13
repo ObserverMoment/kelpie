@@ -13,12 +13,12 @@ struct PodCardView: View {
   @State private var isConfirmingDisband = false
 
   private static let cornerRadius: CGFloat = 12
-  private static let padding: CGFloat = 16
-  private static let memberMinimumWidth: CGFloat = 220
-  private static let memberSpacing: CGFloat = 12
+  private nonisolated static let padding: CGFloat = 16
+  private nonisolated static let memberMinimumWidth: CGFloat = 220
+  private nonisolated static let memberSpacing: CGFloat = 12
 
   /// Member tiles per row in a pod list `width` wide.
-  static func columnCount(forListWidth width: CGFloat) -> Int {
+  nonisolated static func columnCount(forListWidth width: CGFloat) -> Int {
     FleetViewNavigation.columnCount(
       forWidth: width - padding * 2,
       minimumWidth: memberMinimumWidth,

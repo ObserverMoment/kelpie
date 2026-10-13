@@ -60,7 +60,6 @@ struct LayoutSurfaceConduit {
 
   private func wireLifecycleCallbacks(_ view: GhosttySurfaceView, contentID: ContentID, surfaceID: UUID) {
     let host = host
-    let handleUnexpectedZmxClose = handleUnexpectedZmxClose
     view.bridge.onProgressReport = { [weak view] _ in
       guard let view, isLive(view), let tabID = host.tabID(containing: surfaceID) else { return }
       host.updateRunningState(for: tabID)
