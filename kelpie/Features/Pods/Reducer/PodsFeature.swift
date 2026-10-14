@@ -100,18 +100,27 @@ struct PodsFeature {
 
   private static let logger = KelpieLogger("PodsFeature")
 
+  /// "Pod N" for one more than the pods in play, counting on past any name a
+  /// disbanded pod left behind.
+  static func defaultPodName(existing: [String]) -> String {
+    let names = ((existing.count + 1)...).lazy.map { "Pod \($0)" }
+    return names.first { !existing.contains($0) } ?? "Pod \(existing.count + 1)"
+  }
+
   var body: some Reducer<State, Action> {
     Reduce { state, action in
       switch action {
       case .newPodTapped:
-        state.editor = PodEditorFeature.State(mode: .create, candidates: state.structure.candidates)
+        state.editor = PodEditorFeature.State(
+          mode: .create, podName: Self.defaultPodName(existing: state.pods.map(\.name)),
+          candidates: state.structure.candidates)
         return .none
 
       case .addMembersTapped(let podID):
         guard let pod = state.pods[id: podID] else { return .none }
         state.editor = PodEditorFeature.State(
           mode: .addMembers(podID), podName: pod.name, podDescription: pod.description,
-          candidates: state.structure.candidates)
+          candidates: state.structure.candidates, takenNames: pod.members.map(\.name))
         return .none
 
       case .openTapped(let podID):

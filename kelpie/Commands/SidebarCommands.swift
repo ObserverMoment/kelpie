@@ -6,7 +6,7 @@ struct SidebarCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleFleetViewAction) private var toggleFleetViewAction
   @FocusedValue(\.togglePodsViewAction) private var togglePodsViewAction
-  @FocusedValue(\.toggleMailboxViewAction) private var toggleMailboxViewAction
+  @FocusedValue(\.toggleThreadsViewAction) private var toggleThreadsViewAction
   @FocusedValue(\.showStandardViewAction) private var showStandardViewAction
   @FocusedValue(\.revealInSidebarAction) private var revealInSidebarAction
   @FocusedValue(\.expandAllSidebarGroupsAction) private var expandAllSidebarGroupsAction
@@ -51,12 +51,12 @@ struct SidebarCommands: Commands {
       .appKeyboardShortcut(togglePodsView)
       .help("Toggle Pods: your agent pods and their members (\(togglePodsView?.display ?? "none"))")
       .disabled(togglePodsViewAction?.isEnabled != true)
-      Button("Mailbox", systemImage: MailboxView.symbolName) {
-        toggleMailboxViewAction?()
+      Button("Threads", systemImage: ThreadsView.symbolName) {
+        toggleThreadsViewAction?()
       }
       .appKeyboardShortcut(toggleMailboxView)
-      .help("Toggle Mailbox: messages from your agent sessions (\(toggleMailboxView?.display ?? "none"))")
-      .disabled(toggleMailboxViewAction?.isEnabled != true)
+      .help("Toggle Threads: messages from your agent sessions (\(toggleMailboxView?.display ?? "none"))")
+      .disabled(toggleThreadsViewAction?.isEnabled != true)
       Button("Home", systemImage: ViewSwitcherToolbarControl.homeSymbolName) {
         showStandardViewAction?()
       }
@@ -133,7 +133,7 @@ private struct TogglePodsViewActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
-private struct ToggleMailboxViewActionKey: FocusedValueKey {
+private struct ToggleThreadsViewActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
@@ -173,9 +173,9 @@ extension FocusedValues {
     set { self[TogglePodsViewActionKey.self] = newValue }
   }
 
-  var toggleMailboxViewAction: FocusedAction<Void>? {
-    get { self[ToggleMailboxViewActionKey.self] }
-    set { self[ToggleMailboxViewActionKey.self] = newValue }
+  var toggleThreadsViewAction: FocusedAction<Void>? {
+    get { self[ToggleThreadsViewActionKey.self] }
+    set { self[ToggleThreadsViewActionKey.self] = newValue }
   }
 
   var showStandardViewAction: FocusedAction<Void>? {

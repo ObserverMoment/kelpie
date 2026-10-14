@@ -34,6 +34,12 @@ struct FleetViewKeyDecisionTests {
     )
   }
 
+  @Test func spaceJumpsToTheFocusedTile() {
+    #expect(Decision.decide(keyCode: Decision.spaceKeyCode, specialKey: nil, modifiers: []) == .jump)
+    #expect(Decision.decide(keyCode: Decision.spaceKeyCode, specialKey: nil, modifiers: .shift) == .swallow)
+    #expect(Decision.decide(keyCode: Decision.spaceKeyCode, specialKey: nil, modifiers: .command) == .menuShortcut)
+  }
+
   @Test func commandChordsGoToTheMenuBar() {
     #expect(Decision.decide(keyCode: 0, specialKey: nil, modifiers: .command) == .menuShortcut)
     #expect(Decision.decide(keyCode: 0, specialKey: .leftArrow, modifiers: [.command, .shift]) == .menuShortcut)

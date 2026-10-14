@@ -6,6 +6,7 @@ import SwiftUI
 /// description is optional and goes into its podmates' roster.
 struct PodEditorSheet: View {
   @Bindable var store: StoreOf<PodEditorFeature>
+  let runtime: ContentRuntime
 
   var body: some View {
     Form {
@@ -28,6 +29,7 @@ struct PodEditorSheet: View {
         ForEach(store.candidates) { candidate in
           PodCandidateRow(
             candidate: candidate,
+            title: TabTitle.resolved(for: candidate.tab, runtime: runtime),
             draft: store.drafts[id: candidate.id],
             onToggle: { store.send(.memberToggled(candidate.id)) },
             onNameChange: { store.send(.memberNameChanged(candidate.id, $0)) },
@@ -40,7 +42,7 @@ struct PodEditorSheet: View {
     .scrollBounceBehavior(.basedOnSize)
     .safeAreaInset(edge: .bottom, spacing: 0) {
       HStack {
-        Text(store.isCreating ? "Pick at least two sessions and name each one." : "Name each session you add.")
+        Text(footerHint)
           .appFont(.caption)
           .foregroundStyle(.secondary)
         Spacer()
@@ -57,11 +59,20 @@ struct PodEditorSheet: View {
     }
     .frame(minWidth: 520, minHeight: 480)
   }
+
+  /// Names whatever still blocks the submit button.
+  private var footerHint: String {
+    if store.selectedDrafts.contains(where: { $0.trimmedName.isEmpty }) {
+      return "Name each selected session."
+    }
+    return store.isCreating ? "Pick at least two sessions." : "Pick the sessions to add."
+  }
 }
 
 /// One session: a checkbox, and once checked, its member name and description.
 private struct PodCandidateRow: View {
   let candidate: PodStructure.Candidate
+  let title: String
   let draft: PodMemberDraft?
   let onToggle: () -> Void
   let onNameChange: (String) -> Void
@@ -75,10 +86,17 @@ private struct PodCandidateRow: View {
             AgentBadgeView(agent: agent, size: 16, activity: candidate.activity ?? .idle)
           }
           VStack(alignment: .leading, spacing: 2) {
-            Text(candidate.worktreeName)
-            Text("\(candidate.repositoryName) · \(candidate.branchName)")
-              .appFont(.caption)
-              .foregroundStyle(.secondary)
+            Text(title)
+              .lineLimit(1)
+            HStack(spacing: 6) {
+              Text("\(candidate.repositoryName) · \(candidate.branchName)")
+              // Two sessions on one branch share every other line; the
+              // surface id is what `kelpie pod register` names them by.
+              Text(candidate.id.uuidString.prefix(8))
+                .monospaced()
+            }
+            .appFont(.caption)
+            .foregroundStyle(.secondary)
           }
         }
       }

@@ -296,10 +296,10 @@ struct TerminalContentBuilder {
   var wireSurface: (GhosttySurfaceView, ContentRequest) -> Void
   /// Extra environment for a spawning surface (blocking-script markers).
   var environmentExtras: (ContentRequest) -> [String: String]
-  /// Opens a content's newest Mailbox message, behind its strip button. No
+  /// Opens a content's newest Threads message, behind its strip button. No
   /// silent default: an unwired chrome would show a dead button.
   var showLastMessage: (ContentID) -> Void
-  /// Reads a content's newest Mailbox message aloud, behind its strip button.
+  /// Reads a content's newest Threads message aloud, behind its strip button.
   var readLastMessageAloud: (ContentID) -> Void
 
   func factory() -> LayoutContentFactory {

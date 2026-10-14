@@ -9,7 +9,7 @@ import SwiftUI
 struct FleetView: View {
   @Bindable var store: StoreOf<FleetViewFeature>
   let podsStore: StoreOf<PodsFeature>
-  let mailboxStore: StoreOf<MailboxFeature>
+  let threadsStore: StoreOf<ThreadsFeature>
   let terminalsStore: StoreOf<TerminalsFeature>
   let runtime: ContentRuntime
 
@@ -34,8 +34,8 @@ struct FleetView: View {
     VStack(alignment: .leading, spacing: 0) {
       header
       Divider()
-      if store.mode == .mailbox {
-        MailboxView(store: mailboxStore, runtime: runtime)
+      if store.mode == .threads {
+        ThreadsView(store: threadsStore, runtime: runtime)
       } else {
         overviewBody
       }
@@ -53,7 +53,7 @@ struct FleetView: View {
   private var overviewBody: some View {
     Group {
       if store.mode == .pods {
-        PodsView(store: podsStore)
+        PodsView(store: podsStore, runtime: runtime)
       } else if store.structure.isEmpty {
         ContentUnavailableView(
           "No Active Agent Sessions",
@@ -86,8 +86,8 @@ struct FleetView: View {
         if store.mode == .pods {
           Button("New Pod", systemImage: "plus") { podsStore.send(.newPodTapped) }
             .help("Create a pod from running Claude Code sessions")
-        } else if store.mode == .mailbox {
-          Text(mailboxSummary)
+        } else if store.mode == .threads {
+          Text(threadsSummary)
             .appFont(.callout)
             .foregroundStyle(.secondary)
         } else {
@@ -105,7 +105,7 @@ struct FleetView: View {
   private var headerTitle: String {
     switch store.mode {
     case .pods, .podWorkspace: "Pods"
-    case .mailbox: "Mailbox"
+    case .threads: "Threads"
     case .fleet: "Fleet View"
     }
   }
@@ -113,13 +113,13 @@ struct FleetView: View {
   private var headerSymbolName: String {
     switch store.mode {
     case .pods, .podWorkspace: PodsView.symbolName
-    case .mailbox: MailboxView.symbolName
+    case .threads: ThreadsView.symbolName
     case .fleet: Self.symbolName
     }
   }
 
-  private var mailboxSummary: LocalizedStringKey {
-    let unread = mailboxStore.unreadCount
+  private var threadsSummary: LocalizedStringKey {
+    let unread = threadsStore.unreadCount
     return unread == 0 ? "No unread messages" : "^[\(unread) unread message](inflect: true)"
   }
 

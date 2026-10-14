@@ -28,6 +28,13 @@ struct PodStructureTests {
         uniqueElements: members.map { PodMember(id: $0, worktreeID: worktree, name: "Agent", description: "") }))
   }
 
+  @Test func aCandidateCarriesItsTab() {
+    let free = UUID()
+    let structure = PodStructure.compute(pods: [], cards: [card(free)])
+    #expect(structure.candidates.first?.tab.content.id == ContentID(rawValue: free))
+    #expect(structure.candidates.first?.repositoryName == "pods")
+  }
+
   @Test func onlyUnpoddedClaudeSessionsAreEligible() {
     let free = UUID()
     let codex = UUID()

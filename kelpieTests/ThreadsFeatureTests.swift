@@ -7,14 +7,14 @@ import Testing
 @testable import kelpie
 
 @MainActor
-struct MailboxFeatureTests {
-  private static let worktreeID = WorktreeID("/tmp/mailbox/wt")
+struct ThreadsFeatureTests {
+  private static let worktreeID = WorktreeID("/tmp/threads/wt")
 
   private static func makeStore(
     speak: @escaping @MainActor @Sendable (String) async -> Void = { _ in }
-  ) -> TestStoreOf<MailboxFeature> {
-    let store = TestStore(initialState: MailboxFeature.State()) {
-      MailboxFeature()
+  ) -> TestStoreOf<ThreadsFeature> {
+    let store = TestStore(initialState: ThreadsFeature.State()) {
+      ThreadsFeature()
     } withDependencies: {
       $0.uuid = .incrementing
       $0.date.now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -24,7 +24,7 @@ struct MailboxFeatureTests {
     return store
   }
 
-  private static func deliver(_ store: TestStoreOf<MailboxFeature>, surface: UUID, _ body: String) async {
+  private static func deliver(_ store: TestStoreOf<ThreadsFeature>, surface: UUID, _ body: String) async {
     await store.send(.received(surfaceID: surface, worktreeID: worktreeID, agent: .claude, body: body))
   }
 
@@ -40,7 +40,7 @@ struct MailboxFeatureTests {
     #expect(box?.messages.map(\.body) == ["second", "first"])
     #expect(box?.unreadCount == 2)
     #expect(store.state.unreadCount == 2)
-    #expect(store.state.selectedSurfaceID == surface)
+    #expect(store.state.selectedThreadID == .session(surface))
   }
 
   @Test(.dependencies) func openingMarksReadAndShowsMessage() async {
@@ -80,7 +80,7 @@ struct MailboxFeatureTests {
     let newest = store.state.file.boxes[id: surface]!.messages[0].id
 
     await store.send(.lastMessageOpened(surfaceID: surface))
-    #expect(store.state.selectedSurfaceID == surface)
+    #expect(store.state.selectedThreadID == .session(surface))
     #expect(store.state.openMessageID == newest)
     #expect(store.state.openMessage?.isRead == true)
     #expect(store.state.file.boxes[id: surface]?.unreadCount == 1)
@@ -163,21 +163,21 @@ struct MailboxFeatureTests {
 
     await store.send(.sessionEnded(surfaceID: first))
     #expect(Array(store.state.file.boxes.ids) == [second])
-    #expect(store.state.selectedSurfaceID == second)
+    #expect(store.state.selectedThreadID == .session(second))
 
     await store.send(.surfacesClosed([second]))
     #expect(store.state.file.boxes.isEmpty)
-    #expect(store.state.selectedSurfaceID == nil)
+    #expect(store.state.selectedThreadID == nil)
   }
 
-  @Test(.dependencies) func closeStaleMailboxDropsOnlyThatBox() async {
+  @Test(.dependencies) func closeStaleThreadDropsOnlyThatBox() async {
     let store = Self.makeStore()
     let stale = UUID()
     let live = UUID()
     await Self.deliver(store, surface: stale, "old")
     await Self.deliver(store, surface: live, "new")
 
-    await store.send(.closeStaleMailbox(stale))
+    await store.send(.closeStaleThread(stale))
     #expect(Array(store.state.file.boxes.ids) == [live])
   }
 
@@ -232,17 +232,35 @@ struct MailboxFeatureTests {
     #expect(!store.state.isReadingAloud)
   }
 
-  @Test(.dependencies) func replyDelegatesTheQuotedTextAndKeepsTheMessageUntilDelivered() async {
+  @Test(.dependencies) func replyToTheNewestMessageGoesUnquotedAndKeepsItUntilDelivered() async {
     let store = Self.makeStore()
     let surface = UUID()
     await Self.deliver(store, surface: surface, "hello")
     let id = store.state.file.boxes[id: surface]!.messages[0].id
 
     await store.send(.replySent(id, text: "  ship it\n"))
+    await store.receive(\.delegate, .sendReply(surfaceID: surface, text: "ship it", echo: "ship it"))
+    #expect(store.state.file.boxes[id: surface]?.messages.map(\.id) == [id])
+
+    await store.send(.replyDelivered(surfaceID: surface, text: "ship it"))
+    let messages = store.state.file.boxes[id: surface]?.messages ?? []
+    #expect(messages.map(\.author) == [.user, .agent])
+    #expect(messages.first?.isRead == true)
+    #expect(store.state.file.newestMessageID(for: surface) == id)
+    #expect(store.state.timeline.map(\.authorName) == ["Agent", "You"])
+  }
+
+  @Test(.dependencies) func replyToAnOlderMessageQuotesIt() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "hello")
+    let older = store.state.file.boxes[id: surface]!.messages[0].id
+    await Self.deliver(store, surface: surface, "and then")
+
+    await store.send(.replySent(older, text: "ship it"))
     await store.receive(
       \.delegate,
-      .sendReply(messageID: id, surfaceID: surface, text: MailboxFeature.replyQuote(for: "hello") + "ship it"))
-    #expect(store.state.file.boxes[id: surface]?.messages.map(\.id) == [id])
+      .sendReply(surfaceID: surface, text: ThreadsFeature.replyQuote(for: "hello") + "ship it", echo: "ship it"))
   }
 
   @Test(.dependencies) func replyAppendsDroppedFilesAsTheTerminalTypesThem() async {
@@ -251,15 +269,17 @@ struct MailboxFeatureTests {
     await Self.deliver(store, surface: surface, "hello")
     let id = store.state.file.boxes[id: surface]!.messages[0].id
     let files = [URL(fileURLWithPath: "/tmp/shot one.png"), URL(fileURLWithPath: "/tmp/notes.md")]
-    let quote = MailboxFeature.replyQuote(for: "hello")
 
     await store.send(.replySent(id, text: " look \n", attachments: files))
     await store.receive(
-      \.delegate, .sendReply(messageID: id, surfaceID: surface, text: quote + "look /tmp/shot\\ one.png /tmp/notes.md"))
+      \.delegate,
+      .sendReply(
+        surfaceID: surface, text: "look /tmp/shot\\ one.png /tmp/notes.md",
+        echo: "look /tmp/shot\\ one.png /tmp/notes.md"))
 
     // Files alone are a reply, with no stray space before them.
     await store.send(.replySent(id, text: " ", attachments: [files[1]]))
-    await store.receive(\.delegate, .sendReply(messageID: id, surfaceID: surface, text: quote + "/tmp/notes.md"))
+    await store.receive(\.delegate, .sendReply(surfaceID: surface, text: "/tmp/notes.md", echo: "/tmp/notes.md"))
   }
 
   @Test(.dependencies) func blankReplyIsANoOp() async {
@@ -267,43 +287,44 @@ struct MailboxFeatureTests {
     let surface = UUID()
     await Self.deliver(store, surface: surface, "hello")
     let id = store.state.file.boxes[id: surface]!.messages[0].id
+    await store.receive(\.summaryUpdated)
 
     store.exhaustivity = .on
     await store.send(.replySent(id, text: " \n "))
   }
 
-  @Test func debugBuildsKeepTheirOwnMailboxes() {
+  @Test func debugBuildsKeepTheirOwnThreads() {
     #expect(KelpiePaths.mailboxesURL.deletingLastPathComponent().lastPathComponent == "kelpie-dev")
   }
 
   @Test func replyQuoteKeepsShortMessagesWhole() {
-    #expect(MailboxFeature.replyQuote(for: "Just one line") == "<replying-to>\nJust one line\n</replying-to>\n\n")
-    #expect(MailboxFeature.replyQuote(for: "one\n\ntwo\n") == "<replying-to>\none\ntwo\n</replying-to>\n\n")
+    #expect(ThreadsFeature.replyQuote(for: "Just one line") == "<replying-to>\nJust one line\n</replying-to>\n\n")
+    #expect(ThreadsFeature.replyQuote(for: "one\n\ntwo\n") == "<replying-to>\none\ntwo\n</replying-to>\n\n")
   }
 
   @Test func replyQuoteCapsLongLines() {
     let long = String(repeating: "x", count: 400)
-    let quote = MailboxFeature.replyQuote(for: long)
-    #expect(quote.contains(String(repeating: "x", count: MailboxFeature.quotedLineCharacterCap) + "…"))
-    #expect(!quote.contains(String(repeating: "x", count: MailboxFeature.quotedLineCharacterCap + 1)))
+    let quote = ThreadsFeature.replyQuote(for: long)
+    #expect(quote.contains(String(repeating: "x", count: ThreadsFeature.quotedLineCharacterCap) + "…"))
+    #expect(!quote.contains(String(repeating: "x", count: ThreadsFeature.quotedLineCharacterCap + 1)))
   }
 
   @Test func applyStructureKeepsSurvivingSelection() {
-    var state = MailboxFeature.State()
+    var state = ThreadsFeature.State()
     let first = UUID()
     let second = UUID()
     let row = { (id: UUID) in
-      MailboxStructure.Row(
+      ThreadsStructure.Row(
         id: id, worktreeID: Self.worktreeID, tab: nil, worktreeName: "wt", repositoryName: "repo",
-        agent: .claude, unreadCount: 0, messageCount: 1, isStale: false)
+        agent: .claude, unreadCount: 0, messageCount: 1, isStale: false, summary: nil, memberName: nil)
     }
-    state.applyStructure(MailboxStructure(rows: [row(first), row(second)]))
-    #expect(state.selectedSurfaceID == first)
-    state.selectedSurfaceID = second
-    state.applyStructure(MailboxStructure(rows: [row(second)]))
-    #expect(state.selectedSurfaceID == second)
-    state.applyStructure(MailboxStructure(rows: [row(first)]))
-    #expect(state.selectedSurfaceID == first)
+    state.applyStructure(ThreadsStructure(tiles: [.session(row(first)), .session(row(second))]))
+    #expect(state.selectedThreadID == .session(first))
+    state.selectedThreadID = .session(second)
+    state.applyStructure(ThreadsStructure(tiles: [.session(row(second))]))
+    #expect(state.selectedThreadID == .session(second))
+    state.applyStructure(ThreadsStructure(tiles: [.session(row(first))]))
+    #expect(state.selectedThreadID == .session(first))
   }
 }
 
@@ -350,7 +371,7 @@ struct SpeakableTextTests {
   }
 }
 
-extension MailboxFeatureTests {
+extension ThreadsFeatureTests {
   @Test(.dependencies) func arrowsMoveIntoAndThroughTheSelectedSessionsMessages() async {
     let store = Self.makeStore()
     let surface = UUID()
@@ -359,20 +380,21 @@ extension MailboxFeatureTests {
     await Self.deliver(store, surface: surface, "third")
     let ids = store.state.file.boxes[id: surface]!.messages.map(\.id)
 
+    // → lands on the newest message, at the bottom; ↑ walks back in time.
     await store.send(.moveFocus(.right))
     #expect(store.state.focusedMessageID == ids[0])
-    await store.send(.moveFocus(.down))
-    await store.send(.moveFocus(.down))
-    await store.send(.moveFocus(.down))
-    #expect(store.state.focusedMessageID == ids[2])
     await store.send(.moveFocus(.up))
+    await store.send(.moveFocus(.up))
+    await store.send(.moveFocus(.up))
+    #expect(store.state.focusedMessageID == ids[2])
+    await store.send(.moveFocus(.down))
     #expect(store.state.focusedMessageID == ids[1])
     await store.send(.moveFocus(.right))
     #expect(store.state.focusedMessageID == ids[1])
 
     await store.send(.moveFocus(.left))
     #expect(store.state.focusedMessageID == nil)
-    #expect(store.state.selectedSurfaceID == surface)
+    #expect(store.state.selectedThreadID == .session(surface))
   }
 
   @Test(.dependencies) func returnMovesIntoTheMessagesThenOpensTheFocusedOne() async {
@@ -385,13 +407,13 @@ extension MailboxFeatureTests {
     await store.send(.activateFocused)
     #expect(store.state.focusedMessageID == ids[0])
     #expect(store.state.openMessageID == nil)
-    await store.send(.moveFocus(.down))
+    await store.send(.moveFocus(.up))
     await store.send(.activateFocused)
     #expect(store.state.openMessageID == ids[1])
     #expect(store.state.openMessage?.isRead == true)
 
     // The open message ignores the arrows, and closing it lands back on its row.
-    await store.send(.moveFocus(.up))
+    await store.send(.moveFocus(.down))
     #expect(store.state.focusedMessageID == ids[1])
     await store.send(.viewerClosed)
     #expect(store.state.openMessageID == nil)
@@ -409,7 +431,7 @@ extension MailboxFeatureTests {
     await store.send(.messageOpened(id))
     #expect(store.state.focusedMessageID == id)
     await store.send(.viewerClosed)
-    await store.send(.sessionSelected(second))
+    await store.send(.tileSelected(.session(second)))
     #expect(store.state.focusedMessageID == nil)
   }
 
@@ -440,23 +462,24 @@ extension MailboxFeatureTests {
     await store.send(.moveFocus(.right))
     #expect(store.state.focusedMessageID != nil)
     await store.send(.sessionEnded(surfaceID: first))
-    #expect(store.state.selectedSurfaceID == second)
+    #expect(store.state.selectedThreadID == .session(second))
     #expect(store.state.focusedMessageID == nil)
   }
 
   @Test(.dependencies) func losingTheSelectedRowReturnsTheKeysToTheList() {
-    var state = MailboxFeature.State()
+    var state = ThreadsFeature.State()
     let survivor = UUID()
-    state.selectedSurfaceID = UUID()
+    state.selectedThreadID = .session(UUID())
     state.focusedMessageID = UUID()
 
     state.applyStructure(
-      MailboxStructure(rows: [
-        MailboxStructure.Row(
-          id: survivor, worktreeID: Self.worktreeID, tab: nil, worktreeName: "", repositoryName: "",
-          agent: .claude, unreadCount: 0, messageCount: 0, isStale: false)
+      ThreadsStructure(tiles: [
+        .session(
+          ThreadsStructure.Row(
+            id: survivor, worktreeID: Self.worktreeID, tab: nil, worktreeName: "", repositoryName: "",
+            agent: .claude, unreadCount: 0, messageCount: 0, isStale: false, summary: nil, memberName: nil))
       ]))
-    #expect(state.selectedSurfaceID == survivor)
+    #expect(state.selectedThreadID == .session(survivor))
     #expect(state.focusedMessageID == nil)
   }
 

@@ -75,9 +75,9 @@ final class TerminalTabChrome: TabChrome {
   var isReadOnly = false
   var reportedTitle: String?
 
-  /// Unread messages in the pane's mailbox; `MailboxFeature` owns the count.
+  /// Unread messages in the pane's threads; `ThreadsFeature` owns the count.
   var unreadMail = 0
-  /// The pane's mailbox holds at least one message, read or not.
+  /// The pane's threads holds at least one message, read or not.
   var hasMail = false
   /// Opens the pane's newest message; installed when the content is built.
   @ObservationIgnored var showLastMessage: (() -> Void)?
@@ -119,7 +119,7 @@ private struct TerminalAgentBadgeAccessory: View, Equatable {
           .padding(.horizontal, 4)
           .background(.tint, in: Capsule())
           .foregroundStyle(.white)
-          .help("\(unreadMail) unread in this pane's mailbox")
+          .help("\(unreadMail) unread in this pane's threads")
           .accessibilityLabel("\(unreadMail) unread messages")
       }
       if !agents.isEmpty {

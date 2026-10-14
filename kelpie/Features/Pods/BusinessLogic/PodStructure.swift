@@ -31,7 +31,8 @@ struct PodStructure: Equatable, Sendable {
     /// The session's terminal surface.
     let id: UUID
     let worktreeID: Worktree.ID
-    let worktreeName: String
+    /// The hosting tab, so the row shows the live title the strip shows.
+    let tab: TabItem
     let repositoryName: String
     let branchName: String
     let agents: [SkillAgent]
@@ -89,7 +90,7 @@ struct PodStructure: Equatable, Sendable {
       return Candidate(
         id: surfaceID,
         worktreeID: first.worktreeID,
-        worktreeName: first.worktreeName,
+        tab: first.tab,
         repositoryName: first.repositoryName,
         branchName: first.branchName,
         agents: surfaceCards.map(\.agent),

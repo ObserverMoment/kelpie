@@ -104,7 +104,7 @@ struct TerminalClient {
     /// Cycles to the next or previous tab in the focused pane, wrapping at the ends.
     case selectRelativeTab(Worktree, forward: Bool)
     /// `submitsInput: false` leaves `input` at the prompt without a Return (a
-    /// Mailbox reply quote).
+    /// Threads reply quote).
     case focusSurface(Worktree, tabID: TabID, surfaceID: UUID, input: String? = nil, submitsInput: Bool = true)
     case splitSurface(
       Worktree, tabID: TabID, surfaceID: UUID, direction: SplitDirection,

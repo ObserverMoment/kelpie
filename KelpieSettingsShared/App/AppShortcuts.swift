@@ -199,7 +199,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .revealInSidebar: "Reveal in Sidebar"
     case .toggleFleetView: "Toggle Fleet View"
     case .togglePodsView: "Toggle Pods View"
-    case .toggleMailboxView: "Toggle Mailbox View"
+    case .toggleMailboxView: "Toggle Threads View"
     case .showStandardView: "Show Home View"
     case .expandAllSidebarGroups: "Expand All Sidebar Groups"
     case .collapseAllSidebarGroups: "Collapse All Sidebar Groups"
@@ -477,10 +477,12 @@ public enum AppShortcuts {
 
   public static let toggleLeftSidebar = AppShortcut(id: .toggleLeftSidebar, key: "[", modifiers: .command)
   public static let revealInSidebar = AppShortcut(id: .revealInSidebar, key: "e", modifiers: [.command, .shift])
-  public static let toggleFleetView = AppShortcut(id: .toggleFleetView, key: "f", modifiers: [.command, .shift])
-  public static let togglePodsView = AppShortcut(id: .togglePodsView, key: "l", modifiers: [.command, .shift])
-  public static let toggleMailboxView = AppShortcut(id: .toggleMailboxView, key: "i", modifiers: [.command, .shift])
-  public static let showStandardView = AppShortcut(id: .showStandardView, key: "h", modifiers: [.command, .shift])
+  // The four views sit on the right-hand home row under ⌃⌘, in switcher
+  // order: Home, Fleet, Pods, Threads.
+  public static let showStandardView = AppShortcut(id: .showStandardView, key: "h", modifiers: [.command, .control])
+  public static let toggleFleetView = AppShortcut(id: .toggleFleetView, key: "j", modifiers: [.command, .control])
+  public static let togglePodsView = AppShortcut(id: .togglePodsView, key: "k", modifiers: [.command, .control])
+  public static let toggleMailboxView = AppShortcut(id: .toggleMailboxView, key: "l", modifiers: [.command, .control])
   // `]` expands (opens rightward), `[` collapses, mirroring the outline-view
   // Right/Left arrow convention, and pairs with ⌘[ for the sidebar toggle.
   public static let expandAllSidebarGroups = AppShortcut(
@@ -605,10 +607,10 @@ public enum AppShortcuts {
     id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
   )
   public static let showLastAgentMessage = AppShortcut(
-    id: .showLastAgentMessage, key: "i", modifiers: [.command, .control]
+    id: .showLastAgentMessage, key: "n", modifiers: [.command, .control]
   )
   public static let readLastAgentMessageAloud = AppShortcut(
-    id: .readLastAgentMessageAloud, key: "r", modifiers: [.command, .control]
+    id: .readLastAgentMessageAloud, key: "m", modifiers: [.command, .control]
   )
   public static let togglePullRequestInspector = AppShortcut(
     id: .togglePullRequestInspector, key: "g", modifiers: [.command, .option]

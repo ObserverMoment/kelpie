@@ -9,12 +9,15 @@ extension AppFeature.Action {
     switch self {
     case .repositories(let inner):
       return !inner.cacheInvalidations.isEmpty
-    // Moving the Pods or Mailbox cursor reads the structure and changes none of its inputs.
-    case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember), .mailbox(.moveFocus):
+    // Moving the Pods or Threads cursor reads the structure and changes none of its inputs.
+    case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember), .threads(.moveFocus),
+      .threads(.tileSelected), .threads(.threadSelected), .threads(.podExpansionToggled), .threads(.memberToggled),
+      .threads(.activateFocused), .threads(.jumpToFocused), .threads(.readAloudToggled), .threads(.readAloudFinished),
+      .threads(.summaryFailed), .threads(.panelReplyFocusChanged):
       return false
     // Pods add the pod-name caption and feed Pods mode, which the same pass computes.
-    case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleMailbox), .pods,
-      .mailbox:
+    case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleThreads), .pods,
+      .threads:
       return true
     case .fleetView, .settings, .updates, .commandPalette, .terminalEvent:
       return false
@@ -26,7 +29,7 @@ extension AppFeature.Action {
       .openWorktree, .openWorktreeFailed, .openFile, .openFileFromExplorer, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
-      .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom, .showLastAgentMessage,
+      .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom, .showLastAgentMessage, .showThread,
       .readLastAgentMessageAloud, .replyDeliveryFailed, .equalizeSplits, .focusSplit, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,

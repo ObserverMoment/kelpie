@@ -244,7 +244,7 @@ private nonisolated enum DeeplinkParser {
     // "tab/new" → create new tab.
     // "tab/<tab-uuid>/rename" → rename tab.
     // "tab/<tab-uuid>/destroy" → close tab.
-    // "tab/<tab-uuid>/last-message" → open the tab's newest Mailbox message.
+    // "tab/<tab-uuid>/last-message" → open the tab's newest Threads message.
     // "tab/<tab-uuid>/surface/<surface-uuid>" → focus surface.
     // "tab/<tab-uuid>/surface/<surface-uuid>/split" → split surface.
     // "tab/<tab-uuid>/surface/<surface-uuid>/destroy" → close surface.

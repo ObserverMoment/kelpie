@@ -79,6 +79,26 @@ public struct NotificationsSettingsView: View {
             .foregroundStyle(.red)
         }
       }
+      Section("Threads") {
+        Picker(selection: $store.threadSummaryModel) {
+          ForEach(ThreadSummaryModel.allCases, id: \.self) { model in
+            DefaultTaggedLabel(label: model.label, isDefault: model == GlobalSettings.default.threadSummaryModel)
+              .tag(model)
+          }
+        } label: {
+          Text("Summary model")
+          Text("Writes each thread's rolling summary through your Claude Code login. Off keeps threads unsummarised.")
+        }
+        Picker(selection: $store.threadSummaryEffort) {
+          ForEach(ThreadSummaryEffort.allCases, id: \.self) { effort in
+            DefaultTaggedLabel(label: effort.label, isDefault: effort == GlobalSettings.default.threadSummaryEffort)
+              .tag(effort)
+          }
+        } label: {
+          Text("Summary effort")
+          Text("How much the model thinks before writing. Low is enough for a few lines.")
+        }
+      }
     }
     .task { store.send(.checkDeepgramKey) }
     .formStyle(.grouped)

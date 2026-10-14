@@ -107,6 +107,40 @@ public nonisolated enum HoverFocusMode: String, Codable, CaseIterable, Sendable 
   }
 }
 
+/// Which Claude model writes the Threads summaries, as the alias `claude -p`
+/// takes, or `off` for no summaries at all. The String raw value is the
+/// persisted contract.
+public nonisolated enum ThreadSummaryModel: String, Codable, CaseIterable, Sendable {
+  case off
+  case haiku
+  case sonnet
+  case opus
+
+  public var label: String {
+    switch self {
+    case .off: "Off"
+    case .haiku: "Haiku"
+    case .sonnet: "Sonnet"
+    case .opus: "Opus"
+    }
+  }
+}
+
+/// How hard the summary model thinks, as `claude --effort` takes it.
+public nonisolated enum ThreadSummaryEffort: String, Codable, CaseIterable, Sendable {
+  case low
+  case medium
+  case high
+
+  public var label: String {
+    switch self {
+    case .low: "Low"
+    case .medium: "Medium"
+    case .high: "High"
+    }
+  }
+}
+
 public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var appearanceMode: AppearanceMode
   public var defaultEditorID: String
@@ -180,6 +214,10 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automaticRepositoryRefreshEnabled: Bool
   /// Whether hovering a split pane focuses it (focus follows mouse). Off by default.
   public var hoverFocusMode: HoverFocusMode
+  /// The model and effort behind each Threads summary. Haiku at low effort by
+  /// default: a few lines from a short prompt, many times a day.
+  public var threadSummaryModel: ThreadSummaryModel
+  public var threadSummaryEffort: ThreadSummaryEffort
   /// System-wide chord that toggles the app; nil (the default) leaves it unbound.
   public var globalToggleVisibilityHotkey: AppShortcutOverride?
 
@@ -274,6 +312,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true,
     hoverFocusMode: HoverFocusMode = .never,
+    threadSummaryModel: ThreadSummaryModel = .haiku,
+    threadSummaryEffort: ThreadSummaryEffort = .low,
     globalToggleVisibilityHotkey: AppShortcutOverride? = nil
   ) {
     self.appearanceMode = appearanceMode
@@ -321,6 +361,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
     self.hoverFocusMode = hoverFocusMode
+    self.threadSummaryModel = threadSummaryModel
+    self.threadSummaryEffort = threadSummaryEffort
     self.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }
 
@@ -549,6 +591,14 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .hoverFocusMode)) ?? nil)
       .flatMap(HoverFocusMode.init(rawValue:))
       ?? Self.default.hoverFocusMode
+    threadSummaryModel =
+      ((try? container.decodeIfPresent(String.self, forKey: .threadSummaryModel)) ?? nil)
+      .flatMap(ThreadSummaryModel.init(rawValue:))
+      ?? Self.default.threadSummaryModel
+    threadSummaryEffort =
+      ((try? container.decodeIfPresent(String.self, forKey: .threadSummaryEffort)) ?? nil)
+      .flatMap(ThreadSummaryEffort.init(rawValue:))
+      ?? Self.default.threadSummaryEffort
     // A malformed value falls back to unbound instead of throwing, which would
     // reset the whole file to defaults.
     globalToggleVisibilityHotkey =

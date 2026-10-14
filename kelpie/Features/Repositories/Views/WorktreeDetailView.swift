@@ -364,9 +364,9 @@ struct WorktreeDetailView: View {
     let focusedSurfaceHasMail = state.focusedSurfaceHasMail
     // Coarser than `readAloudMessageID`, which the reducer resolves, so inbox
     // arrow keys don't re-run this body.
-    let isShowingMailbox = state.fleetView.isPresented && state.fleetView.mode == .mailbox
-    let hasReadAloudTarget = isShowingMailbox ? !state.mailbox.file.boxes.isEmpty : focusedSurfaceHasMail
-    let canToggleReadAloud = state.mailbox.isReadingAloud || (actsOnLayout && hasReadAloudTarget)
+    let isShowingThreads = state.fleetView.isPresented && state.fleetView.mode == .threads
+    let hasReadAloudTarget = isShowingThreads ? !state.threads.file.boxes.isEmpty : focusedSurfaceHasMail
+    let canToggleReadAloud = state.threads.isReadingAloud || (actsOnLayout && hasReadAloudTarget)
     return
       content
       // Open is enabled only when the resolved editor can open the selection
@@ -679,7 +679,9 @@ struct WorktreeDetailView: View {
             terminalManager: terminalManager,
             inspectorPane: inspectorPane,
             inspectorPresented: inspectorPresented,
-            onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) }
+            threadUnreadCount: store.focusedSurfaceThreadUnreadCount,
+            onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) },
+            onShowThread: { store.send(.showThread(surfaceID: nil)) }
           )
         }
       } else if hasActiveWorktree, let selectedWorktree {
@@ -711,7 +713,9 @@ struct WorktreeDetailView: View {
           repositoriesStore: repositoriesStore,
           inspectorPane: inspectorPane,
           inspectorPresented: inspectorPresented,
+          threadUnreadCount: store.focusedSurfaceThreadUnreadCount,
           onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) },
+          onShowThread: { store.send(.showThread(surfaceID: nil)) },
           onOpenWorktree: { store.send(.openWorktree($0)) },
           onOpenActionSelectionChanged: { store.send(.openActionSelectionChanged($0)) },
           onRevealInFinder: { store.send(.revealInFinder) },
@@ -736,7 +740,9 @@ struct WorktreeDetailView: View {
     let repositoriesStore: StoreOf<RepositoriesFeature>?
     let inspectorPane: WorktreeInspectorPane
     let inspectorPresented: Bool
+    let threadUnreadCount: Int?
     let onActivateInspector: (WorktreeInspectorPane) -> Void
+    let onShowThread: () -> Void
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
     let onRevealInFinder: () -> Void
@@ -794,7 +800,9 @@ struct WorktreeDetailView: View {
         terminalManager: terminalManager,
         inspectorPane: inspectorPane,
         inspectorPresented: inspectorPresented,
-        onActivateInspector: onActivateInspector
+        threadUnreadCount: threadUnreadCount,
+        onActivateInspector: onActivateInspector,
+        onShowThread: onShowThread
       )
     }
 
@@ -878,7 +886,9 @@ struct WorktreeDetailView: View {
     let terminalManager: WorktreeTerminalManager
     let inspectorPane: WorktreeInspectorPane
     let inspectorPresented: Bool
+    let threadUnreadCount: Int?
     let onActivateInspector: (WorktreeInspectorPane) -> Void
+    let onShowThread: () -> Void
 
     var body: some ToolbarContent {
       ToolbarItemGroup {
@@ -905,6 +915,10 @@ struct WorktreeDetailView: View {
           tint: chromeTint,
           foreground: chromeForeground,
           onActivate: { onActivateInspector(.notifications) }
+        )
+        WorktreeThreadsToolbarButton(
+          unreadCount: threadUnreadCount,
+          onActivate: onShowThread
         )
       }
     }
@@ -1523,7 +1537,9 @@ private struct WorktreeToolbarPreview: View {
         repositoriesStore: nil,
         inspectorPane: .git,
         inspectorPresented: false,
+        threadUnreadCount: nil,
         onActivateInspector: { _ in },
+        onShowThread: {},
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onRevealInFinder: {},

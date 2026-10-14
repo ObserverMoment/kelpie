@@ -62,7 +62,7 @@ struct ContentView: View {
         FleetView(
           store: store.scope(state: \.fleetView, action: \.fleetView),
           podsStore: store.scope(state: \.pods, action: \.pods),
-          mailboxStore: store.scope(state: \.mailbox, action: \.mailbox),
+          threadsStore: store.scope(state: \.threads, action: \.threads),
           terminalsStore: store.scope(state: \.terminals, action: \.terminals),
           runtime: ContentRuntime.liveValue
         )
@@ -79,8 +79,8 @@ struct ContentView: View {
     .focusedSceneAction(\.togglePodsViewAction, enabled: true) {
       store.send(.fleetView(.togglePods))
     }
-    .focusedSceneAction(\.toggleMailboxViewAction, enabled: true) {
-      store.send(.fleetView(.toggleMailbox))
+    .focusedSceneAction(\.toggleThreadsViewAction, enabled: true) {
+      store.send(.fleetView(.toggleThreads))
     }
     .focusedSceneAction(\.showStandardViewAction, enabled: store.fleetView.isPresented) {
       store.send(.fleetView(.dismiss))
@@ -100,6 +100,7 @@ struct ContentView: View {
         case .activate: store.send(.fleetView(.activateFocusedCard))
         case .dismiss: store.send(.overlayEscapePressed)
         case .markDone: store.send(.fleetView(.markFocusedDone))
+        case .jump: store.send(.fleetView(.jumpToFocused))
         case .swallow, .menuShortcut: break
         }
       }

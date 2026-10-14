@@ -4,6 +4,7 @@ import SwiftUI
 /// Pods mode of the Fleet View overlay: one card per pod, and the New pod sheet.
 struct PodsView: View {
   @Bindable var store: StoreOf<PodsFeature>
+  let runtime: ContentRuntime
 
   /// The one glyph used by the toolbar, the Sidebar menu item, and the empty state.
   static let symbolName = "circle.hexagongrid"
@@ -51,7 +52,7 @@ struct PodsView: View {
       }
     }
     .sheet(item: $store.scope(state: \.editor, action: \.editor)) { editorStore in
-      PodEditorSheet(store: editorStore)
+      PodEditorSheet(store: editorStore, runtime: runtime)
     }
   }
 }

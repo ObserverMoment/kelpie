@@ -3,7 +3,7 @@ import KelpieSettingsShared
 import Sharing
 import SwiftUI
 
-/// Window-toolbar switch between the full-window views: Fleet, Pods, Mailbox and
+/// Window-toolbar switch between the full-window views: Fleet, Pods, Threads and
 /// Home (the sidebar and terminals). The showing view's glyph is filled.
 struct ViewSwitcherToolbarControl: View {
   let store: StoreOf<AppFeature>
@@ -16,10 +16,18 @@ struct ViewSwitcherToolbarControl: View {
     let overrides = settingsFile.global.shortcutOverrides
     let fleet = store.fleetView
     let showsFleet = fleet.isPresented && fleet.mode == .fleet
-    let showsPods = fleet.isPresented && fleet.mode != .fleet && fleet.mode != .mailbox
-    let showsMailbox = fleet.isPresented && fleet.mode == .mailbox
-    let unreadMail = store.mailbox.unreadCount
+    let showsPods = fleet.isPresented && fleet.mode != .fleet && fleet.mode != .threads
+    let showsThreads = fleet.isPresented && fleet.mode == .threads
+    let unreadMail = store.threads.unreadCount
     ControlGroup {
+      Button {
+        store.send(.fleetView(.dismiss))
+      } label: {
+        Label("Home", systemImage: Self.homeSymbolName)
+          .symbolVariant(fleet.isPresented ? .none : .fill)
+      }
+      .help("Home: the sidebar and terminals (\(Self.shortcut(AppShortcuts.showStandardView, overrides)))")
+      .accessibilityIdentifier("homeViewToolbarButton")
       Button {
         store.send(.fleetView(.toggle))
       } label: {
@@ -39,40 +47,32 @@ struct ViewSwitcherToolbarControl: View {
       .help("Pods: your agent pods and their members (\(Self.shortcut(AppShortcuts.togglePodsView, overrides)))")
       .accessibilityIdentifier("podsViewToolbarButton")
       Button {
-        store.send(.fleetView(.toggleMailbox))
+        store.send(.fleetView(.toggleThreads))
       } label: {
         Group {
           if unreadMail > 0 {
             // Palette keeps the badge dot orange, like the notifications bell.
-            Label("Mailbox", systemImage: "envelope.badge")
+            Label("Threads", systemImage: ThreadsView.unreadSymbolName)
               .symbolRenderingMode(.palette)
-              .foregroundStyle(.orange, envelopeBodyStyle)
+              .foregroundStyle(.orange, unreadBodyStyle)
           } else {
-            Label("Mailbox", systemImage: MailboxView.symbolName)
+            Label("Threads", systemImage: ThreadsView.symbolName)
           }
         }
-        .symbolVariant(showsMailbox ? .fill : .none)
+        .symbolVariant(showsThreads ? .fill : .none)
       }
       .help(
-        "Mailbox: messages from your agent sessions, \(unreadMail) unread "
+        "Threads: messages from your agent sessions, \(unreadMail) unread "
           + "(\(Self.shortcut(AppShortcuts.toggleMailboxView, overrides)))"
       )
-      .accessibilityIdentifier("mailboxViewToolbarButton")
-      Button {
-        store.send(.fleetView(.dismiss))
-      } label: {
-        Label("Home", systemImage: Self.homeSymbolName)
-          .symbolVariant(fleet.isPresented ? .none : .fill)
-      }
-      .help("Home: the sidebar and terminals (\(Self.shortcut(AppShortcuts.showStandardView, overrides)))")
-      .accessibilityIdentifier("homeViewToolbarButton")
+      .accessibilityIdentifier("threadsViewToolbarButton")
     }
   }
 
-  // Envelope body for the unread `envelope.badge` variant: palette can't inherit
-  // the automatic window-key dim, so it drops to secondary by hand when the
-  // window isn't key, matching the notifications bell.
-  private var envelopeBodyStyle: AnyShapeStyle {
+  // Bubble body for the unread glyph: palette can't inherit the automatic
+  // window-key dim, so it drops to secondary by hand when the window isn't
+  // key, matching the notifications bell.
+  private var unreadBodyStyle: AnyShapeStyle {
     controlActiveState == .key ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
   }
 

@@ -477,7 +477,7 @@ final class WorktreeContentHost {
   }
 
   /// Mail replaces the Stop notify, so the banner / sound path still fires
-  /// (with an excerpt) while the full text goes to the mailbox, not the
+  /// (with an excerpt) while the full text goes to the threads, not the
   /// notification store.
   private func handleMailSignal(surfaceID: UUID, id: String, metadata: String) {
     guard isKnownSurface(surfaceID) else {

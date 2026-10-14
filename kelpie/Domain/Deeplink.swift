@@ -45,7 +45,7 @@ enum Deeplink: Equatable, Sendable {
     case tabDestroy(tabID: UUID)
     /// Moves a tab into a fresh split neighboring its current pane.
     case tabMove(tabID: UUID, direction: TerminalSplitMenuDirection)
-    /// Open the tab's newest Mailbox message full-window.
+    /// Open the tab's newest Threads message full-window.
     case tabLastMessage(tabID: UUID)
     /// Focus the pane resolved from a token (its own id, or a tab / content it hosts).
     case paneFocus(token: UUID)

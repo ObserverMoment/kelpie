@@ -12,8 +12,8 @@ struct FleetViewFeature {
   enum Mode: Hashable, Sendable {
     case fleet
     case pods
-    /// Per-session inboxes of agent messages.
-    case mailbox
+    /// Threads of agent messages, one per pod and one per session in no pod.
+    case threads
     /// One pod's members side by side, full window.
     case podWorkspace(PodID)
   }
@@ -74,15 +74,17 @@ struct FleetViewFeature {
     case toggle
     /// Shows Pods mode, or closes the overlay when Pods mode is showing.
     case togglePods
-    /// Shows Mailbox mode, or closes the overlay when Mailbox mode is showing.
-    case toggleMailbox
+    /// Shows Threads mode, or closes the overlay when Threads mode is showing.
+    case toggleThreads
     case modeChanged(Mode)
     case dismiss
     case columnCountChanged(Int)
     case moveFocus(FleetViewNavigation.Direction)
     case activateFocusedCard
-    /// ⌃⌘↩. Only Mailbox mode acts on it, in `AppFeature`.
+    /// ⌃⌘↩. Only Threads mode acts on it, in `AppFeature`.
     case markFocusedDone
+    /// Space. Only Threads mode acts on it, in `AppFeature`.
+    case jumpToFocused
     case cardTapped(FleetCardID)
     case launcherWorktreeChanged(Worktree.ID?)
     case launcherAgentChanged(SkillAgent)
@@ -108,8 +110,8 @@ struct FleetViewFeature {
       case .togglePods:
         return Self.toggle(.pods, state: &state)
 
-      case .toggleMailbox:
-        return Self.toggle(.mailbox, state: &state)
+      case .toggleThreads:
+        return Self.toggle(.threads, state: &state)
 
       case .modeChanged(let mode):
         state.mode = mode
@@ -139,7 +141,7 @@ struct FleetViewFeature {
         guard state.isPresented, state.mode == .fleet, let card = state.focusedCard else { return .none }
         return Self.open(card, state: &state)
 
-      case .markFocusedDone:
+      case .markFocusedDone, .jumpToFocused:
         return .none
 
       case .cardTapped(let id):

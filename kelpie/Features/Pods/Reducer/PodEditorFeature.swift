@@ -17,13 +17,20 @@ struct PodEditorFeature {
     var podName: String
     var podDescription: String
     let candidates: [PodStructure.Candidate]
+    /// Names the pod's current members already use, so a filled-in name
+    /// never duplicates one when adding members.
+    let takenNames: [String]
     var drafts: IdentifiedArrayOf<PodMemberDraft>
 
-    init(mode: Mode, podName: String = "", podDescription: String = "", candidates: [PodStructure.Candidate]) {
+    init(
+      mode: Mode, podName: String = "", podDescription: String = "", candidates: [PodStructure.Candidate],
+      takenNames: [String] = []
+    ) {
       self.mode = mode
       self.podName = podName
       self.podDescription = podDescription
       self.candidates = candidates
+      self.takenNames = takenNames
       drafts = IdentifiedArray(
         uniqueElements: candidates.filter(\.isEligible).map {
           PodMemberDraft(id: $0.id, worktreeID: $0.worktreeID)
@@ -67,6 +74,7 @@ struct PodEditorFeature {
   }
 
   @Dependency(\.dismiss) private var dismiss
+  @Dependency(ContentRuntime.self) private var contentRuntime
 
   var body: some Reducer<State, Action> {
     BindingReducer()
@@ -77,6 +85,9 @@ struct PodEditorFeature {
 
       case .memberToggled(let id):
         state.drafts[id: id]?.isSelected.toggle()
+        if state.drafts[id: id]?.isSelected == true {
+          fillName(for: id, state: &state)
+        }
         return .none
 
       case .memberNameChanged(let id, let name):
@@ -114,5 +125,26 @@ struct PodEditorFeature {
         return .none
       }
     }
+  }
+
+  /// A just-selected member takes its tab title as its name, kept distinct
+  /// from every other name in the pod; a name the user typed stays unless it
+  /// now collides.
+  private func fillName(for id: UUID, state: inout State) {
+    guard let draft = state.drafts[id: id], let candidate = state.candidates.first(where: { $0.id == id }) else {
+      return
+    }
+    let otherNames = state.selectedDrafts.filter { $0.id != id }.map(\.trimmedName)
+    let base = draft.trimmedName.isEmpty ? TabTitle.resolved(for: candidate.tab, runtime: contentRuntime) : draft.name
+    let taken = state.takenNames + otherNames
+    state.drafts[id: id]?.name = Self.uniqueName(base, taken: taken)
+  }
+
+  /// `name`, or `name 2`, `name 3`… when a selected member already has it, so
+  /// two sessions titled alike still get distinct podmate names.
+  static func uniqueName(_ name: String, taken: [String]) -> String {
+    guard taken.contains(name) else { return name }
+    let suffixed = (2...).lazy.map { "\(name) \($0)" }
+    return suffixed.first { !taken.contains($0) } ?? name
   }
 }

@@ -16,9 +16,41 @@ struct PodsFeatureTests {
   private let podID = PodID(rawValue: UUID(0))
 
   private func candidate(_ id: UUID, _ activity: AgentPresenceFeature.Activity) -> PodStructure.Candidate {
-    PodStructure.Candidate(
-      id: id, worktreeID: worktree, worktreeName: "a", repositoryName: "pods", branchName: "main",
+    let tab = TabItem(
+      id: TabID(), title: "Claude",
+      content: ContentSnapshot(
+        id: ContentID(rawValue: id), state: .terminal(TerminalContentState(workingDirectory: nil))))
+    return PodStructure.Candidate(
+      id: id, worktreeID: worktree, tab: tab, repositoryName: "pods", branchName: "main",
       agents: [.claude], activity: activity, disabledReason: nil)
+  }
+
+  @Test func defaultPodNameSkipsNamesStillInUse() {
+    #expect(PodsFeature.defaultPodName(existing: []) == "Pod 1")
+    #expect(PodsFeature.defaultPodName(existing: ["Pod 1"]) == "Pod 2")
+    #expect(PodsFeature.defaultPodName(existing: ["Pod 2"]) == "Pod 3")
+    #expect(PodsFeature.defaultPodName(existing: ["Chat"]) == "Pod 2")
+  }
+
+  @Test(.dependencies) func addingMembersPassesTheCurrentNames() async {
+    var state = PodsFeature.State()
+    state.pods = [Pod(id: podID, name: "Chat", description: "", members: [member(first, "Claude")])]
+    state.structure = PodStructure(pods: [], candidates: [candidate(second, .idle)])
+    let store = makeStore(state, clock: TestClock(), delivered: LockIsolated([:]))
+    await store.send(.addMembersTapped(podID)) {
+      $0.editor = PodEditorFeature.State(
+        mode: .addMembers(self.podID), podName: "Chat", candidates: $0.structure.candidates, takenNames: ["Claude"])
+    }
+  }
+
+  @Test(.dependencies) func newPodIsNamedAfterTheCount() async {
+    var state = PodsFeature.State()
+    state.pods = [Pod(id: podID, name: "Chat", description: "", members: [])]
+    state.structure = PodStructure(pods: [], candidates: [candidate(first, .idle)])
+    let store = makeStore(state, clock: TestClock(), delivered: LockIsolated([:]))
+    await store.send(.newPodTapped) {
+      $0.editor = PodEditorFeature.State(mode: .create, podName: "Pod 2", candidates: $0.structure.candidates)
+    }
   }
 
   private func draft(_ id: UUID, _ name: String) -> PodMemberDraft {

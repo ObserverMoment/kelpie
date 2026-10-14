@@ -310,7 +310,7 @@ private struct TitleView: View, Equatable {
     let accentStyle = accent.shapeStyle(emphasized: isEmphasized)
     VStack(alignment: .leading, spacing: 0) {
       let titleText = Text(name)
-        .appFont(.subheadline)
+        .appFont(.body)
         .lineLimit(1)
       if let customTint, !isEmphasized {
         titleText.foregroundStyle(customTint.color).shimmer(isActive: isBusy)

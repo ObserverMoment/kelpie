@@ -127,7 +127,7 @@ extension AppFeature.Action {
     // change that DOES affect a snapshot input flows back through a separate
     // `.terminalEvent.notificationIndicatorChanged` (counted above) or a
     // `.repositories` cache invalidation (the cacheInvalidations gate above).
-    case .agentPresence, .terminals, .commandPalette, .updates, .pods, .mailbox:
+    case .agentPresence, .terminals, .commandPalette, .updates, .pods, .threads:
       return false
     // Presenting or closing the overlay flips whether ⌃⌘←/→ have a grid to move
     // in; hiding the sidebar drops a focused group header.
@@ -143,7 +143,7 @@ extension AppFeature.Action {
       .openWorktree, .openWorktreeFailed, .openFile, .openFileFromExplorer, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
-      .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom, .showLastAgentMessage,
+      .splitTerminal, .toggleWindowModeForFocusedPane, .toggleSplitZoom, .showLastAgentMessage, .showThread,
       .readLastAgentMessageAloud, .replyDeliveryFailed, .equalizeSplits, .focusSplit, .jumpToLatestUnread,
       .menuBarWorktreeSelected, .markAllNotificationsRead, .runScript, .runNamedScript,
       .manageRepositoryScripts,

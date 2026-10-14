@@ -89,7 +89,7 @@ struct FleetViewStructure: Equatable, Sendable {
     let presence: AgentPresenceFeature.State
     let layouts: IdentifiedArrayOf<LayoutFeature.State>
     var podNameBySurface: [UUID: String] = [:]
-    /// Latest mailbox message per surface; wins over the notification excerpt.
+    /// Latest threads message per surface; wins over the notification excerpt.
     var lastMailBySurface: [UUID: String] = [:]
   }
 

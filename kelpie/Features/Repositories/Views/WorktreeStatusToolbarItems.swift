@@ -1,5 +1,5 @@
-import Sharing
 import KelpieSettingsShared
+import Sharing
 import SwiftUI
 
 /// Leading toolbar back/forward pair that steps through worktree selection
@@ -162,6 +162,39 @@ struct WorktreeFilesToolbarButton: View {
     .tint(tint)
     .help("Toggle Files Inspector (\(shortcut))")
     .accessibilityLabel("Files")
+  }
+}
+
+/// Trailing toolbar button that opens the focused session's thread in Threads.
+/// Disabled while the focused pane has no thread.
+struct WorktreeThreadsToolbarButton: View {
+  /// The thread's unread count; `nil` when the focused pane has no thread.
+  let unreadCount: Int?
+  let onActivate: () -> Void
+  @Environment(\.controlActiveState) private var controlActiveState
+  @Shared(.settingsFile) private var settingsFile
+
+  var body: some View {
+    let shortcut = WorktreeDetailView.resolveShortcutDisplay(
+      for: AppShortcuts.toggleMailboxView,
+      overrides: settingsFile.global.shortcutOverrides
+    )
+    Button(action: onActivate) {
+      if let unreadCount, unreadCount > 0 {
+        Label("Thread", systemImage: ThreadsView.unreadSymbolName)
+          .symbolRenderingMode(.palette)
+          .foregroundStyle(.orange, bodyStyle)
+      } else {
+        Label("Thread", systemImage: ThreadsView.symbolName)
+      }
+    }
+    .disabled(unreadCount == nil)
+    .help("Show this session's thread in Threads (\(shortcut) toggles Threads)")
+    .accessibilityLabel((unreadCount ?? 0) > 0 ? "Thread, \(unreadCount ?? 0) unread" : "Thread")
+  }
+
+  private var bodyStyle: AnyShapeStyle {
+    controlActiveState == .key ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
   }
 }
 

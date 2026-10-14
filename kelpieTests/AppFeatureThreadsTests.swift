@@ -9,8 +9,8 @@ import Testing
 @testable import kelpie
 
 @MainActor
-struct AppFeatureMailboxTests {
-  private static let root = URL(fileURLWithPath: "/tmp/mailbox-app")
+struct AppFeatureThreadsTests {
+  private static let root = URL(fileURLWithPath: "/tmp/threads-app")
 
   private static func makeWorktree(_ id: String) -> Worktree {
     Worktree(
@@ -20,12 +20,12 @@ struct AppFeatureMailboxTests {
 
   private static func makeStore(
     worktree: Worktree, others: [Worktree] = [], layouts: IdentifiedArrayOf<LayoutFeature.State> = [],
-    liveAgentSurfaceIDs: [UUID] = [],
+    liveAgentSurfaceIDs: [UUID] = [], pods: IdentifiedArrayOf<Pod> = [],
     speak: @escaping @MainActor @Sendable (String) async -> Void = { _ in }
   ) -> TestStoreOf<AppFeature> {
     var repositories = RepositoriesFeature.State(reconciledRepositories: [
       Repository(
-        id: RepositoryID(root.path), rootURL: root, name: "mailbox-app",
+        id: RepositoryID(root.path), rootURL: root, name: "threads-app",
         worktrees: IdentifiedArray(uniqueElements: [worktree] + others))
     ])
     repositories.isInitialLoadComplete = true
@@ -33,6 +33,7 @@ struct AppFeatureMailboxTests {
     repositories.recomputeSidebarStructureIfChanged()
     var state = AppFeature.State(repositories: repositories, settings: SettingsFeature.State())
     state.terminals.layouts = layouts
+    state.pods.pods = pods
     for surfaceID in liveAgentSurfaceIDs {
       state.agentPresence.bySurface[surfaceID] = [.claude]
     }
@@ -64,55 +65,55 @@ struct AppFeatureMailboxTests {
   {
     await store.send(
       .terminalEvent(.agentMailReceived(worktreeID: worktree.id, surfaceID: surfaceID, agent: .claude, body: body)))
-    await store.receive(\.mailbox.received)
+    await store.receive(\.threads.received)
   }
 
-  @Test(.dependencies) func toggleMailboxShowsAndHidesTheOverlay() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+  @Test(.dependencies) func toggleThreadsShowsAndHidesTheOverlay() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
 
-    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.fleetView(.toggleThreads))
     #expect(store.state.fleetView.isPresented)
-    #expect(store.state.fleetView.mode == .mailbox)
+    #expect(store.state.fleetView.mode == .threads)
 
     await store.send(.fleetView(.toggle))
     #expect(store.state.fleetView.mode == .fleet)
 
-    await store.send(.fleetView(.toggleMailbox))
-    #expect(store.state.fleetView.mode == .mailbox)
-    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.fleetView(.toggleThreads))
+    #expect(store.state.fleetView.mode == .threads)
+    await store.send(.fleetView(.toggleThreads))
     await store.receive(\.fleetView.dismiss)
     #expect(!store.state.fleetView.isPresented)
   }
 
-  @Test(.dependencies) func mailEventLandsInTheMailbox() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+  @Test(.dependencies) func mailEventLandsInTheThreads() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let surfaceID = UUID()
 
     await store.send(
       .terminalEvent(.agentMailReceived(worktreeID: worktree.id, surfaceID: surfaceID, agent: .claude, body: "done")))
-    await store.receive(\.mailbox.received)
-    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.map(\.body) == ["done"])
-    #expect(store.state.mailbox.unreadCount == 1)
+    await store.receive(\.threads.received)
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.map(\.body) == ["done"])
+    #expect(store.state.threads.unreadCount == 1)
   }
 
-  @Test(.dependencies) func hookEventsRouteToTheMailbox() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+  @Test(.dependencies) func hookEventsRouteToTheThreads() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let surfaceID = UUID()
     await store.send(
       .terminalEvent(.agentMailReceived(worktreeID: worktree.id, surfaceID: surfaceID, agent: .claude, body: "done")))
-    await store.receive(\.mailbox.received)
+    await store.receive(\.threads.received)
 
     let ended = AgentHookEvent(agent: "claude", event: "session_end", surfaceID: surfaceID, pid: nil, data: nil)
     await store.send(.terminalEvent(.agentHookEventReceived(ended)))
-    await store.receive(\.mailbox.sessionEnded)
-    #expect(store.state.mailbox.file.boxes.isEmpty)
+    await store.receive(\.threads.sessionEnded)
+    #expect(store.state.threads.file.boxes.isEmpty)
   }
 
   @Test(.dependencies) func lastMessageRequestOpensTheFocusedPanesNewestMessage() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
@@ -121,16 +122,16 @@ struct AppFeatureMailboxTests {
     #expect(store.state.focusedSurfaceHasMail)
 
     await store.send(.showLastAgentMessage(surfaceID: nil))
-    await store.receive(\.fleetView.toggleMailbox)
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.fleetView.toggleThreads)
+    await store.receive(\.threads.lastMessageOpened)
     #expect(store.state.fleetView.isPresented)
-    #expect(store.state.fleetView.mode == .mailbox)
-    #expect(store.state.mailbox.openMessage?.body == "new")
-    #expect(store.state.mailbox.viewerReturnsToPane)
+    #expect(store.state.fleetView.mode == .threads)
+    #expect(store.state.threads.openMessage?.body == "new")
+    #expect(store.state.threads.viewerReturnsToPane)
   }
 
   @Test(.dependencies) func readAloudReadsTheFocusedPanesNewestMessage() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let spoken = LockIsolated<[String]>([])
     let store = Self.makeStore(
@@ -139,13 +140,13 @@ struct AppFeatureMailboxTests {
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
 
     await store.send(.readLastAgentMessageAloud(surfaceID: nil))
-    await store.receive(\.mailbox.readAloudToggled)
-    await store.receive(\.mailbox.readAloudFinished)
+    await store.receive(\.threads.readAloudToggled)
+    await store.receive(\.threads.readAloudFinished)
     #expect(spoken.value == ["hi"])
   }
 
   @Test(.dependencies) func readAloudHotkeyReadsTheOpenViewerMessage() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let spoken = LockIsolated<[String]>([])
     let store = Self.makeStore(
@@ -153,18 +154,18 @@ struct AppFeatureMailboxTests {
       speak: { text in spoken.withValue { $0.append(text) } })
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
-    let first = store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id
+    let first = store.state.threads.file.boxes[id: surfaceID]!.messages[1].id
 
-    await store.send(.fleetView(.toggleMailbox))
-    await store.send(.mailbox(.messageOpened(first)))
+    await store.send(.fleetView(.toggleThreads))
+    await store.send(.threads(.messageOpened(first)))
     #expect(store.state.isShowingMailViewer)
     await store.send(.readLastAgentMessageAloud(surfaceID: nil))
-    await store.receive(\.mailbox.readAloudFinished)
+    await store.receive(\.threads.readAloudFinished)
     #expect(spoken.value == ["first"])
   }
 
   @Test(.dependencies) func readAloudButtonReadsItsPanesNewestMessageOverTheOpenViewer() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let spoken = LockIsolated<[String]>([])
     let store = Self.makeStore(
@@ -172,17 +173,17 @@ struct AppFeatureMailboxTests {
       speak: { text in spoken.withValue { $0.append(text) } })
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
-    let first = store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id
+    let first = store.state.threads.file.boxes[id: surfaceID]!.messages[1].id
 
-    await store.send(.fleetView(.toggleMailbox))
-    await store.send(.mailbox(.messageOpened(first)))
+    await store.send(.fleetView(.toggleThreads))
+    await store.send(.threads(.messageOpened(first)))
     await store.send(.readLastAgentMessageAloud(surfaceID: surfaceID))
-    await store.receive(\.mailbox.readAloudFinished)
+    await store.receive(\.threads.readAloudFinished)
     #expect(spoken.value == ["second"])
   }
 
   @Test(.dependencies) func readAloudHotkeyReadsTheFocusedInboxMessage() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let spoken = LockIsolated<[String]>([])
     let store = Self.makeStore(
@@ -191,19 +192,19 @@ struct AppFeatureMailboxTests {
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
 
-    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.fleetView(.toggleThreads))
     await store.send(.fleetView(.moveFocus(.right)))
-    await store.receive(\.mailbox.moveFocus)
-    await store.send(.fleetView(.moveFocus(.down)))
-    await store.receive(\.mailbox.moveFocus)
-    #expect(store.state.mailbox.focusedMessageID == store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id)
+    await store.receive(\.threads.moveFocus)
+    await store.send(.fleetView(.moveFocus(.up)))
+    await store.receive(\.threads.moveFocus)
+    #expect(store.state.threads.focusedMessageID == store.state.threads.file.boxes[id: surfaceID]!.messages[1].id)
     await store.send(.readLastAgentMessageAloud(surfaceID: nil))
-    await store.receive(\.mailbox.readAloudFinished)
+    await store.receive(\.threads.readAloudFinished)
     #expect(spoken.value == ["first"])
   }
 
   @Test(.dependencies) func readAloudHotkeyReadsTheSelectedSessionOverTheFocusedPane() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let paneSurfaceID = UUID()
     let otherSurfaceID = UUID()
     let spoken = LockIsolated<[String]>([])
@@ -213,25 +214,25 @@ struct AppFeatureMailboxTests {
     await Self.deliver(store, worktree: worktree, surfaceID: paneSurfaceID, "pane")
     await Self.deliver(store, worktree: worktree, surfaceID: otherSurfaceID, "other")
 
-    await store.send(.fleetView(.toggleMailbox))
-    // Opening the Mailbox may select either row first; step to the other one.
-    let rows = store.state.mailbox.structure.rows.map(\.id)
-    let selectedIndex = rows.firstIndex(of: store.state.mailbox.selectedSurfaceID!)!
+    await store.send(.fleetView(.toggleThreads))
+    // Opening the Threads may select either row first; step to the other one.
+    let rows = store.state.threads.structure.sessions.map(\.id)
+    let selectedIndex = rows.firstIndex { ThreadID.session($0) == store.state.threads.selectedThreadID }!
     let otherIndex = rows.firstIndex(of: otherSurfaceID)!
     let direction: FleetViewNavigation.Direction = otherIndex > selectedIndex ? .down : .up
     for _ in 0..<abs(otherIndex - selectedIndex) {
       await store.send(.fleetView(.moveFocus(direction)))
-      await store.receive(\.mailbox.moveFocus)
+      await store.receive(\.threads.moveFocus)
     }
-    #expect(store.state.mailbox.selectedSurfaceID == otherSurfaceID)
-    #expect(store.state.mailbox.focusedMessageID == nil)
+    #expect(store.state.threads.selectedThreadID == .session(otherSurfaceID))
+    #expect(store.state.threads.focusedMessageID == nil)
     await store.send(.readLastAgentMessageAloud(surfaceID: nil))
-    await store.receive(\.mailbox.readAloudFinished)
+    await store.receive(\.threads.readAloudFinished)
     #expect(spoken.value == ["other"])
   }
 
-  @Test(.dependencies) func anInboxMessageLeftOpenIsNotShownOrReadOutsideTheMailbox() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+  @Test(.dependencies) func anInboxMessageLeftOpenIsNotShownOrReadOutsideTheThreads() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let spoken = LockIsolated<[String]>([])
     let store = Self.makeStore(
@@ -239,77 +240,77 @@ struct AppFeatureMailboxTests {
       speak: { text in spoken.withValue { $0.append(text) } })
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "first")
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "second")
-    let first = store.state.mailbox.file.boxes[id: surfaceID]!.messages[1].id
+    let first = store.state.threads.file.boxes[id: surfaceID]!.messages[1].id
 
-    await store.send(.fleetView(.toggleMailbox))
-    await store.send(.mailbox(.messageOpened(first)))
+    await store.send(.fleetView(.toggleThreads))
+    await store.send(.threads(.messageOpened(first)))
     await store.send(.fleetView(.modeChanged(.fleet)))
     #expect(!store.state.isShowingMailViewer)
 
     await store.send(.fleetView(.dismiss))
     await store.send(.readLastAgentMessageAloud(surfaceID: nil))
-    await store.receive(\.mailbox.readAloudFinished)
+    await store.receive(\.threads.readAloudFinished)
     #expect(spoken.value == ["second"])
   }
 
-  @Test(.dependencies) func viewerReplyIsDeliveredThenTheMessageIsDone() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+  @Test(.dependencies) func viewerReplyIsDeliveredThenAppendedAsTheUsersMessage() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
       liveAgentSurfaceIDs: [surfaceID])
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
-    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
     let delivered = LockIsolated<[String]>([])
     store.dependencies.terminalClient.deliverPrompt = { target, text in
       delivered.withValue { $0.append(text) }
       return target == surfaceID
     }
 
-    await store.send(.mailbox(.replySent(id, text: "ok")))
-    await store.receive(\.mailbox.markDone)
-    #expect(delivered.value == [MailboxFeature.replyQuote(for: "hi") + "ok"])
-    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.isEmpty != false)
+    await store.send(.threads(.replySent(id, text: "ok")))
+    await store.receive(\.threads.replyDelivered)
+    #expect(delivered.value == ["ok"])
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.map(\.author) == [.user, .agent])
   }
 
   @Test(.dependencies) func replyToAnExitedAgentIsNotDelivered() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
-    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
     let delivered = LockIsolated(false)
     store.dependencies.terminalClient.deliverPrompt = { _, _ in
       delivered.setValue(true)
       return true
     }
 
-    await store.send(.mailbox(.replySent(id, text: "ok")))
-    await store.receive(\.mailbox.delegate.sendReply)
+    await store.send(.threads(.replySent(id, text: "ok")))
+    await store.receive(\.threads.delegate.sendReply)
     #expect(!delivered.value)
     #expect(store.state.alert != nil)
-    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.map(\.id) == [id])
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.map(\.id) == [id])
   }
 
   @Test(.dependencies) func failedReplyKeepsTheMessageAndAlerts() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
       liveAgentSurfaceIDs: [surfaceID])
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
-    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
     store.dependencies.terminalClient.deliverPrompt = { _, _ in false }
 
-    await store.send(.mailbox(.replySent(id, text: "ok")))
+    await store.send(.threads(.replySent(id, text: "ok")))
     await store.receive(\.replyDeliveryFailed)
     #expect(store.state.alert != nil)
-    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.map(\.id) == [id])
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.map(\.id) == [id])
   }
 
   @Test(.dependencies) func lastMessageRequestIsANoOpWithoutMail() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: UUID(), tabID: TabID())])
     #expect(!store.state.focusedSurfaceHasMail)
@@ -319,8 +320,8 @@ struct AppFeatureMailboxTests {
     #expect(!store.state.fleetView.isPresented)
   }
 
-  @Test(.dependencies) func lastMessageRequestSwitchesModeOrKeepsTheMailboxOpen() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+  @Test(.dependencies) func lastMessageRequestSwitchesModeOrKeepsTheThreadsOpen() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
@@ -328,19 +329,19 @@ struct AppFeatureMailboxTests {
 
     await store.send(.fleetView(.toggle))
     await store.send(.showLastAgentMessage(surfaceID: surfaceID))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
     #expect(store.state.fleetView.isPresented)
-    #expect(store.state.fleetView.mode == .mailbox)
+    #expect(store.state.fleetView.mode == .threads)
 
-    // Already showing the Mailbox: the toggle would close it, so none is sent.
+    // Already showing the Threads: the toggle would close it, so none is sent.
     await store.send(.showLastAgentMessage(surfaceID: surfaceID))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
     #expect(store.state.fleetView.isPresented)
-    #expect(store.state.mailbox.viewerReturnsToPane)
+    #expect(store.state.threads.viewerReturnsToPane)
   }
 
   @Test(.dependencies) func closingAPaneViewerReturnsToThePane() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let tabID = TabID()
     let store = Self.makeStore(
@@ -349,22 +350,22 @@ struct AppFeatureMailboxTests {
     store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
     await store.send(.showLastAgentMessage(surfaceID: nil))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
 
-    await store.send(.mailbox(.viewerClosed))
-    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.send(.threads(.viewerClosed))
+    await store.receive(\.threads.delegate.closedToPane)
     await store.receive(\.repositories.selectWorktree)
     await store.finish()
 
     #expect(!store.state.fleetView.isPresented)
-    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(store.state.threads.openMessageID == nil)
     #expect(
       sent.value.contains(
         .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: nil, submitsInput: false)))
   }
 
   @Test(.dependencies) func escapeFromAPaneViewerReturnsToThePane() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let tabID = TabID()
     let store = Self.makeStore(
@@ -373,24 +374,24 @@ struct AppFeatureMailboxTests {
     store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
     await store.send(.showLastAgentMessage(surfaceID: nil))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
 
     await store.send(.overlayEscapePressed)
     await store.receive(\.fleetView.dismiss)
     await store.receive(\.fleetView.delegate.dismissed)
-    await store.receive(\.mailbox.overlayDismissed)
-    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.receive(\.threads.overlayDismissed)
+    await store.receive(\.threads.delegate.closedToPane)
     await store.finish()
 
     #expect(!store.state.fleetView.isPresented)
-    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(store.state.threads.openMessageID == nil)
     #expect(
       sent.value.contains(
         .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: nil, submitsInput: false)))
   }
 
   @Test(.dependencies) func lastMessageDeeplinkOpensTheTabsMessage() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let tabID = TabID()
     let store = Self.makeStore(
@@ -403,15 +404,15 @@ struct AppFeatureMailboxTests {
 
     await store.send(.deeplink(.worktree(id: worktree.id, action: .tabLastMessage(tabID: tabID.rawValue))))
     await store.receive(\.showLastAgentMessage)
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
     #expect(store.state.fleetView.isPresented)
-    #expect(store.state.mailbox.openMessage?.body == "hi")
+    #expect(store.state.threads.openMessage?.body == "hi")
     #expect(store.state.alert == nil)
   }
 
   @Test(.dependencies) func lastMessageDeeplinkRefusalLeavesTheSelection() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
-    let other = Self.makeWorktree("/tmp/mailbox-app/other")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let other = Self.makeWorktree("/tmp/threads-app/other")
     let tabID = TabID()
     let store = Self.makeStore(
       worktree: worktree, others: [other], layouts: [Self.layout(worktree: other, surfaceID: UUID(), tabID: tabID)])
@@ -437,7 +438,7 @@ struct AppFeatureMailboxTests {
   }
 
   @Test(.dependencies) func lastMessageDeeplinkRefusesAWindowedPane() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let tabID = TabID()
     var layout = Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: tabID)
@@ -456,8 +457,8 @@ struct AppFeatureMailboxTests {
 
   @Test(.dependencies, arguments: [false, true])
   func closingAfterMovingToAnotherWorktreeStaysThere(viaEscape: Bool) async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
-    let other = Self.makeWorktree("/tmp/mailbox-app/other")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let other = Self.makeWorktree("/tmp/threads-app/other")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, others: [other],
@@ -466,25 +467,25 @@ struct AppFeatureMailboxTests {
     store.dependencies.terminalClient.send = { command in sent.withValue { $0.append(command) } }
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
     await store.send(.showLastAgentMessage(surfaceID: nil))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
 
     // A jump or slot hotkey under the overlay lands in another worktree.
     await store.send(.repositories(.selectWorktree(other.id)))
-    await store.send(viaEscape ? .fleetView(.dismiss) : .mailbox(.viewerClosed))
-    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.send(viaEscape ? .fleetView(.dismiss) : .threads(.viewerClosed))
+    await store.receive(\.threads.delegate.closedToPane)
     await store.receive(\.repositories.sidebarItems)
     #expect(store.state.repositories.sidebarItems[id: other.id]?.shouldFocusTerminal == true)
     await store.finish()
 
     #expect(store.state.repositories.selectedWorktreeID == other.id)
     #expect(!store.state.fleetView.isPresented)
-    #expect(store.state.mailbox.openMessageID == nil)
+    #expect(store.state.threads.openMessageID == nil)
     #expect(!sent.value.contains { if case .focusSurface = $0 { true } else { false } })
   }
 
   @Test(.dependencies) func lastMessageDeeplinkToAnotherWorktreeClosesToThatTab() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
-    let other = Self.makeWorktree("/tmp/mailbox-app/other")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let other = Self.makeWorktree("/tmp/threads-app/other")
     let surfaceID = UUID()
     let tabID = TabID()
     let store = Self.makeStore(
@@ -498,11 +499,11 @@ struct AppFeatureMailboxTests {
     await Self.deliver(store, worktree: other, surfaceID: surfaceID, "hi")
 
     await store.send(.deeplink(.worktree(id: other.id, action: .tabLastMessage(tabID: tabID.rawValue))))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
     #expect(store.state.repositories.selectedWorktreeID == other.id)
 
     await store.send(.fleetView(.dismiss))
-    await store.receive(\.mailbox.delegate.closedToPane)
+    await store.receive(\.threads.delegate.closedToPane)
     await store.finish()
     #expect(
       sent.value.contains(
@@ -510,7 +511,7 @@ struct AppFeatureMailboxTests {
   }
 
   @Test(.dependencies) func lastMessageRequestIgnoresAWindowedFocusedPane() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     var layout = Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())
     layout.windowedPaneIDs = [layout.layout.panes[0].id]
@@ -524,22 +525,22 @@ struct AppFeatureMailboxTests {
   }
 
   @Test(.dependencies) func launchingFromFleetDropsAPaneViewer() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
     store.dependencies.terminalClient.send = { _ in }
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
     await store.send(.showLastAgentMessage(surfaceID: nil))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
 
     await store.send(.fleetView(.delegate(.launch(worktreeID: worktree.id, command: "claude"))))
-    #expect(store.state.mailbox.openMessageID == nil)
-    #expect(!store.state.mailbox.viewerReturnsToPane)
+    #expect(store.state.threads.openMessageID == nil)
+    #expect(!store.state.threads.viewerReturnsToPane)
   }
 
   @Test(.dependencies) func paletteEntryOpensTheFocusedPanesMessage() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(
       worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
@@ -547,12 +548,12 @@ struct AppFeatureMailboxTests {
 
     await store.send(.commandPalette(.delegate(.layoutCommand(.showLastAgentMessage))))
     await store.receive(\.showLastAgentMessage)
-    await store.receive(\.mailbox.lastMessageOpened)
-    #expect(store.state.mailbox.openMessage?.body == "hi")
+    await store.receive(\.threads.lastMessageOpened)
+    #expect(store.state.threads.openMessage?.body == "hi")
   }
 
   @Test(.dependencies) func openingAFleetCardDropsAPaneViewer() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let tabID = TabID()
     let store = Self.makeStore(
@@ -560,16 +561,16 @@ struct AppFeatureMailboxTests {
     store.dependencies.terminalClient.send = { _ in }
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
     await store.send(.showLastAgentMessage(surfaceID: nil))
-    await store.receive(\.mailbox.lastMessageOpened)
+    await store.receive(\.threads.lastMessageOpened)
 
     await store.send(
       .fleetView(.delegate(.openSession(worktreeID: worktree.id, tabID: tabID, surfaceID: surfaceID))))
-    #expect(store.state.mailbox.openMessageID == nil)
-    #expect(!store.state.mailbox.viewerReturnsToPane)
+    #expect(store.state.threads.openMessageID == nil)
+    #expect(!store.state.threads.viewerReturnsToPane)
   }
 
   @Test(.dependencies) func mailChromeTracksTheBoxAndIsRewrittenOnWake() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let tabID = TabID()
     let runtime = ContentRuntime()
@@ -594,14 +595,14 @@ struct AppFeatureMailboxTests {
     #expect(rebuilt.terminalChrome.stripActions.isEmpty)
     #expect(rebuilt.terminalChrome.unreadMail == 1)
 
-    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
-    await store.send(.mailbox(.markDone(id)))
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
+    await store.send(.threads(.markDone(id)))
     #expect(!rebuilt.terminalChrome.hasMail)
     #expect(rebuilt.terminalChrome.unreadMail == 0)
   }
 
   @Test(.dependencies) func anAgentThatExitsWithoutAHookTakesItsMailWithIt() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let exited = UUID()
     let running = UUID()
@@ -609,65 +610,65 @@ struct AppFeatureMailboxTests {
     await Self.deliver(store, worktree: worktree, surfaceID: running, "here")
 
     await store.send(.agentPresence(.delegate(.agentsExited([exited]))))
-    await store.receive(\.mailbox.sessionEnded)
-    #expect(Array(store.state.mailbox.file.boxes.ids) == [running])
+    await store.receive(\.threads.sessionEnded)
+    #expect(Array(store.state.threads.file.boxes.ids) == [running])
   }
 
   @Test(.dependencies) func closedSurfacesDropTheirBoxes() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let surfaceID = UUID()
     await store.send(
       .terminalEvent(.agentMailReceived(worktreeID: worktree.id, surfaceID: surfaceID, agent: .claude, body: "x")))
-    await store.receive(\.mailbox.received)
+    await store.receive(\.threads.received)
 
     await store.send(.terminalEvent(.surfacesClosed(worktreeID: worktree.id, [surfaceID])))
-    await store.receive(\.mailbox.surfacesClosed)
-    #expect(store.state.mailbox.file.boxes.isEmpty)
+    await store.receive(\.threads.surfacesClosed)
+    #expect(store.state.threads.file.boxes.isEmpty)
   }
 }
 
-extension AppFeatureMailboxTests {
-  @Test(.dependencies) func arrowKeysWalkTheSessionsThenTheInboxInMailboxMode() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+extension AppFeatureThreadsTests {
+  @Test(.dependencies) func arrowKeysWalkTheSessionsThenTheInboxInThreadsMode() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     await Self.deliver(store, worktree: worktree, surfaceID: UUID(), "a")
     await Self.deliver(store, worktree: worktree, surfaceID: UUID(), "b")
-    await store.send(.fleetView(.toggleMailbox))
-    let rows = store.state.mailbox.structure.rows.map(\.id)
+    await store.send(.fleetView(.toggleThreads))
+    let rows = store.state.threads.structure.sessions.map(\.id)
     #expect(rows.count == 2)
 
     await store.send(.fleetView(.moveFocus(.up)))
-    await store.receive(\.mailbox.moveFocus)
-    #expect(store.state.mailbox.selectedSurfaceID == rows[0])
+    await store.receive(\.threads.moveFocus)
+    #expect(store.state.threads.selectedThreadID == .session(rows[0]))
     await store.send(.fleetView(.moveFocus(.down)))
-    await store.receive(\.mailbox.moveFocus)
-    #expect(store.state.mailbox.selectedSurfaceID == rows[1])
+    await store.receive(\.threads.moveFocus)
+    #expect(store.state.threads.selectedThreadID == .session(rows[1]))
 
-    let message = store.state.mailbox.file.boxes[id: rows[1]]!.messages[0].id
+    let message = store.state.threads.file.boxes[id: rows[1]]!.messages[0].id
     await store.send(.fleetView(.moveFocus(.right)))
-    await store.receive(\.mailbox.moveFocus)
-    #expect(store.state.mailbox.focusedMessageID == message)
+    await store.receive(\.threads.moveFocus)
+    #expect(store.state.threads.focusedMessageID == message)
     await store.send(.fleetView(.activateFocusedCard))
-    await store.receive(\.mailbox.activateFocused)
-    #expect(store.state.mailbox.openMessageID == message)
+    await store.receive(\.threads.activateFocused)
+    #expect(store.state.threads.openMessageID == message)
     #expect(store.state.fleetView.isPresented)
   }
 
   @Test(.dependencies) func escapeStepsBackFromAnInboxMessageThenCloses() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let surfaceID = UUID()
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
-    await store.send(.fleetView(.toggleMailbox))
-    let id = store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id
-    await store.send(.mailbox(.messageOpened(id)))
+    await store.send(.fleetView(.toggleThreads))
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
+    await store.send(.threads(.messageOpened(id)))
 
     await store.send(.overlayEscapePressed)
-    await store.receive(\.mailbox.viewerClosed)
+    await store.receive(\.threads.viewerClosed)
     #expect(store.state.fleetView.isPresented)
-    #expect(store.state.mailbox.openMessageID == nil)
-    #expect(store.state.mailbox.focusedMessageID == id)
+    #expect(store.state.threads.openMessageID == nil)
+    #expect(store.state.threads.focusedMessageID == id)
 
     await store.send(.overlayEscapePressed)
     await store.receive(\.fleetView.dismiss)
@@ -676,66 +677,166 @@ extension AppFeatureMailboxTests {
 
   @Test(.dependencies, arguments: [false, true])
   func onlyALiveSessionsReplyBoxTakesTheKeysFromTheMonitor(isLive: Bool) async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let surfaceID = UUID()
     let store = Self.makeStore(worktree: worktree, liveAgentSurfaceIDs: isLive ? [surfaceID] : [])
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
-    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.fleetView(.toggleThreads))
 
-    await store.send(.mailbox(.messageOpened(store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id)))
+    await store.send(.threads(.messageOpened(store.state.threads.file.boxes[id: surfaceID]!.messages[0].id)))
     #expect(store.state.isShowingMailViewer)
     #expect(store.state.mailViewerTakesKeys == isLive)
   }
 
   @Test(.dependencies) func optionCommandReturnMarksTheFocusedInboxMessageDone() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let surfaceID = UUID()
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "a")
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "b")
-    await store.send(.fleetView(.toggleMailbox))
-    let ids = store.state.mailbox.file.boxes[id: surfaceID]!.messages.map(\.id)
+    await store.send(.fleetView(.toggleThreads))
+    let ids = store.state.threads.file.boxes[id: surfaceID]!.messages.map(\.id)
 
     // On the session list no message has the keys.
     await store.send(.fleetView(.markFocusedDone))
-    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.count == 2)
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.count == 2)
 
     await store.send(.fleetView(.moveFocus(.right)))
-    await store.receive(\.mailbox.moveFocus)
+    await store.receive(\.threads.moveFocus)
     await store.send(.fleetView(.markFocusedDone))
-    await store.receive(\.mailbox.markDone)
-    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.map(\.id) == [ids[1]])
-    #expect(store.state.mailbox.focusedMessageID == ids[1])
+    await store.receive(\.threads.markDone)
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.map(\.id) == [ids[1]])
+    #expect(store.state.threads.focusedMessageID == ids[1])
   }
 
   @Test(.dependencies) func optionCommandReturnInFleetModeLeavesTheInboxAlone() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let surfaceID = UUID()
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "a")
-    await store.send(.fleetView(.toggleMailbox))
+    await store.send(.fleetView(.toggleThreads))
     await store.send(.fleetView(.moveFocus(.right)))
-    await store.receive(\.mailbox.moveFocus)
+    await store.receive(\.threads.moveFocus)
     await store.send(.fleetView(.toggle))
     #expect(store.state.fleetView.mode == .fleet)
-    #expect(store.state.mailbox.focusedMessageID != nil)
+    #expect(store.state.threads.focusedMessageID != nil)
 
     await store.send(.fleetView(.markFocusedDone))
-    #expect(store.state.mailbox.file.boxes[id: surfaceID]?.messages.count == 1)
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.count == 1)
   }
 
   @Test(.dependencies) func escapeInFleetModeClosesTheOverlayDespiteAnOpenInboxMessage() async {
-    let worktree = Self.makeWorktree("/tmp/mailbox-app/wt")
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
     let store = Self.makeStore(worktree: worktree)
     let surfaceID = UUID()
     await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
-    await store.send(.fleetView(.toggleMailbox))
-    await store.send(.mailbox(.messageOpened(store.state.mailbox.file.boxes[id: surfaceID]!.messages[0].id)))
+    await store.send(.fleetView(.toggleThreads))
+    await store.send(.threads(.messageOpened(store.state.threads.file.boxes[id: surfaceID]!.messages[0].id)))
     await store.send(.fleetView(.toggle))
     #expect(store.state.fleetView.mode == .fleet)
 
     await store.send(.overlayEscapePressed)
     await store.receive(\.fleetView.dismiss)
+    #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func showThreadOpensThreadsOnThePanesTile() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    // No thread yet: nothing happens.
+    await store.send(.showThread(surfaceID: surfaceID))
+    #expect(!store.state.fleetView.isPresented)
+
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.showThread(surfaceID: nil))
+    await store.receive(\.threads.threadSelected)
+    #expect(store.state.fleetView.isPresented)
+    #expect(store.state.fleetView.mode == .threads)
+    #expect(store.state.threads.selectedThreadID == .session(surfaceID))
+    #expect(store.state.focusedSurfaceThreadUnreadCount == 1)
+  }
+
+  @Test(.dependencies) func aPoddedDeliveryRollsThePodSummaryUntilThePodIsRemoved() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let surfaceID = UUID()
+    let podID = PodID(rawValue: UUID())
+    let pod = Pod(
+      id: podID, name: "Crew", description: "",
+      members: [PodMember(id: surfaceID, worktreeID: worktree.id, name: "Alpha", description: "")], sentRoster: nil)
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())],
+      pods: [pod])
+    // The pod's post-reduce pass materialises its members' tab content.
+    store.dependencies[LayoutContentFactory.self] = LayoutContentFactory { request in
+      InertTabContent(id: request.contentID, state: request.content)
+    }
+    store.dependencies.terminalClient.deliverPrompt = { _, _ in true }
+    store.dependencies.terminalClient.reassertSurfaceActivity = {}
+    await store.send(
+      .terminalEvent(.agentMailReceived(worktreeID: worktree.id, surfaceID: surfaceID, agent: .claude, body: "hi")))
+    await store.receive(\.threads.received)
+    #expect(store.state.threads.summariesInFlight.contains(.pod(podID)))
+
+    await store.send(.pods(.delegate(.podRemoved(podID))))
+    await store.receive(\.threads.podRemoved)
+    #expect(!store.state.threads.summariesInFlight.contains(.pod(podID)))
+  }
+
+  @Test(.dependencies) func spaceOnATileLeavesTheOverlayForThatPane() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.fleetView(.toggleThreads))
+    await store.send(.fleetView(.jumpToFocused))
+    await store.receive(\.threads.jumpToFocused)
+    await store.receive(\.threads.delegate.jumpToSession)
+    #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func thePanelReplyBoxTakesTheKeysFromTheOverlayMonitor() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    await store.send(.fleetView(.toggleThreads))
+    #expect(!store.state.mailViewerTakesKeys)
+    await store.send(.threads(.panelReplyFocusChanged(true)))
+    #expect(store.state.mailViewerTakesKeys)
+    await store.send(.threads(.panelReplyFocusChanged(false)))
+    #expect(!store.state.mailViewerTakesKeys)
+
+    // The box vanishes under the viewer, and under a dismissed overlay, without reporting.
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
+    await store.send(.threads(.panelReplyFocusChanged(true)))
+    await store.send(.threads(.messageOpened(id)))
+    #expect(!store.state.threads.isPanelReplyFocused)
+    await store.send(.threads(.viewerClosed))
+    await store.send(.threads(.panelReplyFocusChanged(true)))
+    await store.send(.fleetView(.dismiss))
+    await store.receive(\.threads.overlayDismissed)
+    #expect(!store.state.mailViewerTakesKeys)
+    #expect(!store.state.threads.isPanelReplyFocused)
+  }
+
+  @Test(.dependencies) func aThreadWithOnlyTheUsersReplyHasNoMailToShow() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(
+      worktree: worktree, layouts: [Self.layout(worktree: worktree, surfaceID: surfaceID, tabID: TabID())])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
+    await store.send(.threads(.replyDelivered(surfaceID: surfaceID, text: "ok")))
+    await store.send(.threads(.markDone(id)))
+    #expect(store.state.threads.file.boxes[id: surfaceID]?.messages.map(\.author) == [.user])
+    #expect(!store.state.focusedSurfaceHasMail)
+    #expect(store.state.readAloudMessageID == nil)
+
+    await store.send(.showLastAgentMessage(surfaceID: surfaceID))
     #expect(!store.state.fleetView.isPresented)
   }
 }

@@ -94,7 +94,7 @@ struct AppFeature {
     var commandPalette = CommandPaletteFeature.State()
     var fleetView = FleetViewFeature.State()
     var pods = PodsFeature.State()
-    var mailbox = MailboxFeature.State()
+    var threads = ThreadsFeature.State()
     /// Terminal-orchestration state. Owns the per-tab feature collection so
     /// tab-bar views scope through `\.terminals` (narrow) instead of the full
     /// app store. Mirrors sidebar's `RepositoriesFeature` ownership pattern.
@@ -261,12 +261,17 @@ struct AppFeature {
 
     /// Whether the focused pane has a message to show.
     var focusedSurfaceHasMail: Bool {
-      focusedSurfaceID.map(mailbox.file.hasMail(for:)) ?? false
+      focusedSurfaceID.map(threads.file.hasMail(for:)) ?? false
     }
 
-    /// A Mailbox message is open full-window, with its reply box.
+    /// The focused pane's thread unread count; `nil` when it has no thread.
+    var focusedSurfaceThreadUnreadCount: Int? {
+      focusedSurfaceID.flatMap { threads.file.boxes[id: $0]?.unreadCount }
+    }
+
+    /// A Threads message is open full-window, with its reply box.
     var isShowingMailViewer: Bool {
-      fleetView.isPresented && fleetView.mode == .mailbox && mailbox.openMessage != nil
+      fleetView.isPresented && fleetView.mode == .threads && threads.openMessage != nil
     }
 
     /// The open message's reply box can take the keys, so the Fleet key monitor
@@ -274,17 +279,20 @@ struct AppFeature {
     /// monitor stays on and Escape closes the viewer instead of reaching the
     /// hidden terminal.
     var mailViewerTakesKeys: Bool {
-      isShowingMailViewer && mailbox.selectedRow?.isStale == false
+      let viewerReplying = isShowingMailViewer && threads.openMessageRow?.isStale == false
+      let panelReplying = fleetView.isPresented && fleetView.mode == .threads && threads.isPanelReplyFocused
+      return viewerReplying || panelReplying
     }
 
-    /// What the Read Aloud hotkey reads: while the Mailbox shows, the open
-    /// message, else the inbox's focused one, else the selected session's
-    /// newest; otherwise the focused pane's newest.
+    /// What the Read Aloud hotkey reads: while Threads shows, the open
+    /// message, else the focused one, else the shown thread's newest agent
+    /// message; otherwise the focused pane's newest agent message.
     var readAloudMessageID: MailMessage.ID? {
-      guard fleetView.isPresented, fleetView.mode == .mailbox else {
-        return focusedSurfaceID.flatMap(mailbox.file.newestMessageID(for:))
+      guard fleetView.isPresented, fleetView.mode == .threads else {
+        return focusedSurfaceID.flatMap(threads.file.newestMessageID(for:))
       }
-      return mailbox.openMessage?.id ?? mailbox.focusedMessageID ?? mailbox.selectedBox?.messages.first?.id
+      let newestAgentMessageID = threads.timeline.last { $0.message.author == .agent }?.id
+      return threads.openMessage?.id ?? threads.focusedMessageID ?? newestAgentMessageID
     }
   }
 
@@ -338,7 +346,7 @@ struct AppFeature {
     case commandPalette(CommandPaletteFeature.Action)
     case fleetView(FleetViewFeature.Action)
     case pods(PodsFeature.Action)
-    case mailbox(MailboxFeature.Action)
+    case threads(ThreadsFeature.Action)
     /// ⌃⌘ + arrow: moves the keyboard cursor in whichever view is showing.
     case navigate(FleetViewNavigation.Direction)
     /// Escape while the overlay is up: a message opened from the inbox steps
@@ -373,12 +381,15 @@ struct AppFeature {
     case toggleWindowModeForFocusedPane
     case toggleSplitZoom
     case equalizeSplits
-    /// Opens a pane's newest Mailbox message full-window; `nil` means the
+    /// Opens a pane's newest Threads message full-window; `nil` means the
     /// focused pane. No-op when the pane has no mail.
     case showLastAgentMessage(surfaceID: UUID?)
-    /// Reads a pane's newest Mailbox message aloud, or stops the reading;
+    /// Reads a pane's newest Threads message aloud, or stops the reading;
     /// `nil` means the focused pane.
     case readLastAgentMessageAloud(surfaceID: UUID?)
+    /// Shows Threads with a pane's thread selected; `nil` means the focused
+    /// pane. No-op when the pane has no thread.
+    case showThread(surfaceID: UUID?)
     /// The viewer's reply could not reach its session.
     case replyDeliveryFailed
     case focusSplit(TerminalSplitMenuDirection)
@@ -524,7 +535,7 @@ struct AppFeature {
 
       case .agentPresence(.delegate(.agentsExited(let surfaces))):
         // The agent is gone as surely as after a `session_end`, so its mail goes too.
-        return .merge(surfaces.map { .send(.mailbox(.sessionEnded(surfaceID: $0))) })
+        return .merge(surfaces.map { .send(.threads(.sessionEnded(surfaceID: $0))) })
 
       case .agentPresence:
         return .none
@@ -1184,20 +1195,30 @@ struct AppFeature {
 
       case .showLastAgentMessage(let surfaceID):
         guard let surfaceID = surfaceID ?? state.focusedSurfaceID,
-          state.mailbox.file.hasMail(for: surfaceID)
+          state.threads.file.hasMail(for: surfaceID)
         else { return .none }
-        let showsMailbox = state.fleetView.isPresented && state.fleetView.mode == .mailbox
+        let showsThreads = state.fleetView.isPresented && state.fleetView.mode == .threads
         // Present first, so the launcher seeding arm runs before the message opens.
         return .concatenate(
-          showsMailbox ? .none : .send(.fleetView(.toggleMailbox)),
-          .send(.mailbox(.lastMessageOpened(surfaceID: surfaceID)))
+          showsThreads ? .none : .send(.fleetView(.toggleThreads)),
+          .send(.threads(.lastMessageOpened(surfaceID: surfaceID)))
+        )
+
+      case .showThread(let surfaceID):
+        guard let surfaceID = surfaceID ?? state.focusedSurfaceID,
+          state.threads.file.boxes[id: surfaceID] != nil
+        else { return .none }
+        let showsThreads = state.fleetView.isPresented && state.fleetView.mode == .threads
+        return .concatenate(
+          showsThreads ? .none : .send(.fleetView(.toggleThreads)),
+          .send(.threads(.threadSelected(forSurface: surfaceID)))
         )
 
       case .readLastAgentMessageAloud(let surfaceID):
         // A tab strip button names its pane; the hotkey reads what is on screen.
         let messageID =
-          if let surfaceID { state.mailbox.file.newestMessageID(for: surfaceID) } else { state.readAloudMessageID }
-        return .send(.mailbox(.readAloudToggled(messageID)))
+          if let surfaceID { state.threads.file.newestMessageID(for: surfaceID) } else { state.readAloudMessageID }
+        return .send(.threads(.readAloudToggled(messageID)))
 
       case .replyDeliveryFailed:
         state.alert = lastAgentMessageAlert(
@@ -1786,7 +1807,7 @@ struct AppFeature {
         return .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true)))
 
       case .fleetView(.delegate(.openSession(let worktreeID, let tabID, let surfaceID))):
-        state.mailbox.dropPaneViewer()
+        state.threads.dropPaneViewer()
         guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
         // Same shape as jump-to-unread: `focusSurface` carries the worktree, so it
         // needn't wait for the selection to land.
@@ -1798,7 +1819,7 @@ struct AppFeature {
         )
 
       case .fleetView(.delegate(.launch(let worktreeID, let command))):
-        state.mailbox.dropPaneViewer()
+        state.threads.dropPaneViewer()
         guard let worktree = state.repositories.worktree(for: worktreeID) else { return .none }
         let shouldRunSetupScript =
           state.repositories.sidebarItems[id: worktreeID]?.lifecycle == .pending
@@ -1812,13 +1833,15 @@ struct AppFeature {
         )
 
       case .fleetView(.delegate(.dismissed)):
-        // A message opened from a pane closes back to that pane.
-        if state.mailbox.viewerReturnsToPane {
-          return .send(.mailbox(.overlayDismissed))
+        // Threads always hears it, so a reply box that held the keys lets go;
+        // a message opened from a pane closes back to that pane.
+        let dismissal: Effect<Action> = .send(.threads(.overlayDismissed))
+        if state.threads.viewerReturnsToPane {
+          return dismissal
         }
-        return refocusSelectedTerminal(state: state)
+        return .merge(dismissal, refocusSelectedTerminal(state: state))
 
-      case .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleMailbox):
+      case .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleThreads):
         // Seed the launcher with the selected worktree before the child opens
         // (the child reducer runs after this arm).
         if !state.fleetView.isPresented {
@@ -1833,20 +1856,23 @@ struct AppFeature {
       case .fleetView(.activateFocusedCard) where state.fleetView.mode == .pods:
         return .send(.pods(.activateFocusedMember))
 
-      // Mailbox mode walks its sessions and messages the same way.
-      case .fleetView(.moveFocus(let direction)) where state.fleetView.mode == .mailbox:
-        return .send(.mailbox(.moveFocus(direction)))
+      // Threads mode walks its sessions and messages the same way.
+      case .fleetView(.moveFocus(let direction)) where state.fleetView.mode == .threads:
+        return .send(.threads(.moveFocus(direction)))
 
-      case .fleetView(.activateFocusedCard) where state.fleetView.mode == .mailbox:
-        return .send(.mailbox(.activateFocused))
+      case .fleetView(.activateFocusedCard) where state.fleetView.mode == .threads:
+        return .send(.threads(.activateFocused))
 
-      case .fleetView(.markFocusedDone) where state.fleetView.mode == .mailbox:
-        guard let messageID = state.mailbox.focusedMessageID else { return .none }
-        return .send(.mailbox(.markDone(messageID)))
+      case .fleetView(.jumpToFocused) where state.fleetView.mode == .threads:
+        return .send(.threads(.jumpToFocused))
+
+      case .fleetView(.markFocusedDone) where state.fleetView.mode == .threads:
+        guard let messageID = state.threads.focusedMessageID else { return .none }
+        return .send(.threads(.markDone(messageID)))
 
       case .overlayEscapePressed:
-        if state.fleetView.mode == .mailbox, state.mailbox.viewerReturnsToInbox {
-          return .send(.mailbox(.viewerClosed))
+        if state.fleetView.mode == .threads, state.threads.viewerReturnsToThread {
+          return .send(.threads(.viewerClosed))
         }
         return .send(.fleetView(.dismiss))
 
@@ -1866,13 +1892,14 @@ struct AppFeature {
         return .send(.fleetView(.modeChanged(.podWorkspace(podID))))
 
       case .pods(.delegate(.podRemoved(let podID))):
-        guard state.fleetView.mode == .podWorkspace(podID) else { return .none }
-        return .send(.fleetView(.modeChanged(.pods)))
+        let threadsEffect: Effect<Action> = .send(.threads(.podRemoved(podID)))
+        guard state.fleetView.mode == .podWorkspace(podID) else { return threadsEffect }
+        return .merge(threadsEffect, .send(.fleetView(.modeChanged(.pods))))
 
       case .pods:
         return .none
 
-      case .mailbox(.delegate(.sendReply(let messageID, let surfaceID, let text))):
+      case .threads(.delegate(.sendReply(let surfaceID, let text, let echo))):
         // A stale box's agent has exited: the reply would land in the shell and
         // the message would be cleared as if answered.
         guard state.agentPresence.bySurface[surfaceID]?.isEmpty == false else {
@@ -1882,10 +1909,11 @@ struct AppFeature {
         }
         return .run { [terminalClient] send in
           let delivered = await terminalClient.deliverPrompt(surfaceID, text)
-          await send(delivered ? .mailbox(.markDone(messageID)) : .replyDeliveryFailed)
+          await send(delivered ? .threads(.replyDelivered(surfaceID: surfaceID, text: echo)) : .replyDeliveryFailed)
         }
 
-      case .mailbox(.delegate(.closedToPane(let worktreeID, let surfaceID))):
+      case .threads(.delegate(.closedToPane(let worktreeID, let surfaceID))),
+        .threads(.delegate(.jumpToSession(let worktreeID, let surfaceID))):
         // Back to the origin pane, unless the user moved to another worktree
         // under the overlay; then stay there.
         guard worktreeID == state.repositories.selectedWorktreeID else {
@@ -1894,7 +1922,7 @@ struct AppFeature {
         }
         return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, state: &state)
 
-      case .mailbox:
+      case .threads:
         return .none
 
       case .commandPalette(.delegate(.dismissedWithoutSelection)):
@@ -2293,18 +2321,24 @@ struct AppFeature {
           ids.count == 1
           ? .send(.agentPresence(.surfaceClosed(ids.first!)))
           : .send(.agentPresence(.surfacesClosed(ids)))
-        return .merge(presenceEffect, ackEffect, .send(.mailbox(.surfacesClosed(ids))))
+        return .merge(presenceEffect, ackEffect, .send(.threads(.surfacesClosed(ids))))
 
       case .terminalEvent(.agentHookEventReceived(let event)):
         let mailEffect: Effect<Action> =
           switch event.eventName {
-          case .sessionEnd: .send(.mailbox(.sessionEnded(surfaceID: event.surfaceID)))
+          case .sessionEnd: .send(.threads(.sessionEnded(surfaceID: event.surfaceID)))
           default: .none
           }
         return .merge(.send(.agentPresence(.hookEventReceived(event))), mailEffect)
 
       case .terminalEvent(.agentMailReceived(let worktreeID, let surfaceID, let agent, let body)):
-        return .send(.mailbox(.received(surfaceID: surfaceID, worktreeID: worktreeID, agent: agent, body: body)))
+        let podID = state.pods.podID(containing: surfaceID)
+        let memberName = podID.flatMap { state.pods.pods[id: $0]?.members[id: surfaceID]?.name }
+        return .send(
+          .threads(
+            .received(
+              surfaceID: surfaceID, worktreeID: worktreeID, agent: agent, body: body, podID: podID,
+              memberName: memberName)))
 
       // The user is looking at this surface, so whatever was parked on them there
       // is acknowledged. Scoped to the focused surface, so a broken session in
@@ -2341,8 +2375,8 @@ struct AppFeature {
     Scope(state: \.pods, action: \.pods) {
       PodsFeature()
     }
-    Scope(state: \.mailbox, action: \.mailbox) {
-      MailboxFeature()
+    Scope(state: \.threads, action: \.threads) {
+      ThreadsFeature()
     }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
@@ -2378,16 +2412,17 @@ struct AppFeature {
             presence: state.agentPresence,
             layouts: state.terminals.layouts,
             podNameBySurface: PodStructure.podNames(state.pods.pods),
-            lastMailBySurface: state.mailbox.file.latestBodyBySurface
+            lastMailBySurface: state.threads.file.latestBodyBySurface
           )
         )
       )
       state.pods.applyStructure(
         PodStructure.compute(pods: state.pods.pods, cards: state.fleetView.structure.allCards))
-      state.mailbox.applyStructure(
-        MailboxStructure.compute(
+      state.threads.applyStructure(
+        ThreadsStructure.compute(
           .init(
-            boxes: state.mailbox.file.boxes,
+            file: state.threads.file,
+            pods: state.pods.pods,
             sidebarItems: state.repositories.sidebarItems,
             repositories: state.repositories.repositories,
             presence: state.agentPresence,
@@ -2399,18 +2434,18 @@ struct AppFeature {
     }
     Reduce { state, action in
       // The unread badge and has-mail flag live on each pane's chrome
-      // (content-side state, per CLAUDE.md), so write them whenever a mailbox
+      // (content-side state, per CLAUDE.md), so write them whenever a threads
       // action lands, and again after a hydrate or a wake (a relaunch or zmx
       // reattach rebuilds the content with blank chrome).
       switch action {
-      case .mailbox: break
+      case .threads: break
       case .terminals(.layoutsHydrated), .terminals(.layouts(.element(_, .wakeTab))): break
       default: return .none
       }
-      let boxes = state.mailbox.file.boxes
+      let boxes = state.threads.file.boxes
       let current = Set(boxes.ids)
-      writeMailChrome(for: current.union(state.mailbox.badgedSurfaceIDs), boxes: boxes)
-      state.mailbox.badgedSurfaceIDs = current
+      writeMailChrome(for: current.union(state.threads.badgedSurfaceIDs), boxes: boxes)
+      state.threads.badgedSurfaceIDs = current
       return .none
     }
     Reduce { state, action in
@@ -2613,7 +2648,7 @@ struct AppFeature {
     return .send(.repositories(.sidebarItems(.element(id: worktreeID, action: .focusTerminalRequested))))
   }
 
-  /// Straight to a mailbox's pane, like opening a Fleet card: the overlay
+  /// Straight to a thread's pane, like opening a Fleet card: the overlay
   /// closes and the pane takes focus.
   private func openMailPane(
     worktreeID: Worktree.ID, surfaceID: UUID, state: inout State
@@ -2632,7 +2667,7 @@ struct AppFeature {
     )
   }
 
-  private func writeMailChrome(for surfaceIDs: some Sequence<UUID>, boxes: IdentifiedArrayOf<Mailbox>) {
+  private func writeMailChrome(for surfaceIDs: some Sequence<UUID>, boxes: IdentifiedArrayOf<MessageThread>) {
     for surfaceID in surfaceIDs {
       guard
         let chrome = contentRuntime.content(for: ContentID(rawValue: surfaceID))?.chrome
@@ -2642,7 +2677,7 @@ struct AppFeature {
       // does not re-render every strip.
       let unread = boxes[id: surfaceID]?.unreadCount ?? 0
       if chrome.unreadMail != unread { chrome.unreadMail = unread }
-      let hasMail = boxes[id: surfaceID]?.messages.isEmpty == false
+      let hasMail = boxes[id: surfaceID]?.newestAgentMessage != nil
       if chrome.hasMail != hasMail { chrome.hasMail = hasMail }
     }
   }
@@ -3269,11 +3304,11 @@ struct AppFeature {
       let tab = TabID(rawValue: tabID)
       let layoutState = state.terminals.layouts[id: worktreeID]
       let pane = layoutState?.layout.pane(containingTab: tab)
-      guard let surfaceID = pane?.tabs[id: tab]?.content.id.rawValue, state.mailbox.file.hasMail(for: surfaceID)
+      guard let surfaceID = pane?.tabs[id: tab]?.content.id.rawValue, state.threads.file.hasMail(for: surfaceID)
       else {
-        deeplinkLogger.warning("Tab \(tabID) has no Mailbox message in worktree \(worktreeID)")
+        deeplinkLogger.warning("Tab \(tabID) has no Threads message in worktree \(worktreeID)")
         state.alert = lastAgentMessageAlert(
-          title: "No agent message", message: "This tab has no message in its Mailbox.")
+          title: "No agent message", message: "This tab has no message in its thread.")
         return .none
       }
       // A pane window cannot show the main window's overlay, as with the hotkey.
