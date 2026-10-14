@@ -230,8 +230,8 @@ private struct SidebarSectionDispatcher: View {
       )
     case .folder(let repositoryID, let rowID):
       if let repository = store.state.repositories[id: repositoryID] {
-        // Empty header keeps `.listStyle(.sidebar)` from merging two
-        // consecutive folder repos visually.
+        // A zero-height header keeps `.listStyle(.sidebar)` from merging two
+        // consecutive folder repos visually; its top inset is the gap.
         Section {
           SidebarFolderRow(
             repository: repository,
@@ -241,7 +241,7 @@ private struct SidebarSectionDispatcher: View {
             terminalManager: terminalManager
           )
         } header: {
-          EmptyView()
+          SidebarSectionGap()
         }
       }
     case .repositoryGroup(let groupID, let name, let isCollapsed, let members):
@@ -311,6 +311,10 @@ private struct SidebarGitRepositorySection: View {
         hostInfo: repository.host?.displayAuthority,
         isResolving: isResolvingRemote
       )
+      // The top inset is the gap between repos; the bottom is tight so the
+      // first worktree row sits close under the name.
+      .listRowInsets(.top, SidebarNestLayout.sectionSpacing)
+      .listRowInsets(.bottom, 0)
     }
     .sectionActions {
       SidebarSectionActionsView(
@@ -467,7 +471,7 @@ private struct SidebarRepositoryGroupSection: View {
   let terminalManager: WorktreeTerminalManager
 
   var body: some View {
-    // Empty header keeps `.listStyle(.sidebar)` from merging neighbouring
+    // Zero-height header keeps `.listStyle(.sidebar)` from merging neighbouring
     // cards; the header row below is an ordinary row so it takes the fill.
     Section {
       SidebarGroupHeaderRow(
@@ -504,8 +508,17 @@ private struct SidebarRepositoryGroupSection: View {
             } : nil)
       }
     } header: {
-      EmptyView()
+      SidebarSectionGap()
     }
+  }
+}
+
+/// Zero-height section header whose top inset is the gap between sections.
+private struct SidebarSectionGap: View {
+  var body: some View {
+    Color.clear
+      .frame(height: 0)
+      .listRowInsets(EdgeInsets(top: SidebarNestLayout.sectionSpacing, leading: 0, bottom: 0, trailing: 0))
   }
 }
 

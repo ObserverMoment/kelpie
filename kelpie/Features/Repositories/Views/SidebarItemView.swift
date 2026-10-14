@@ -18,6 +18,9 @@ enum SidebarNestLayout {
   static let groupMemberIndent: CGFloat = 4
   /// Vertical inset of a worktree row; the group header cursor pill matches it.
   static let rowVerticalInset: CGFloat = 4
+  /// Gap between neighbouring sections (group cards, loose repositories),
+  /// drawn as the section header's top inset.
+  static let sectionSpacing: CGFloat = 6
   /// The branch / pull-request glyph and its check badge, drawn smaller than
   /// the leading slot so the title, not the icon, carries the row.
   static let rowIconSize: CGFloat = 12
