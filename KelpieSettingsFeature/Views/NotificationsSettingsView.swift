@@ -65,13 +65,65 @@ public struct NotificationsSettingsView: View {
           Text("Worktrees with unread notifications will be shown first.")
         }
       }
+      Section("Read aloud") {
+        switch store.deepgramKeyIsSet {
+        case nil:
+          ProgressView().controlSize(.small)
+        case true?:
+          deepgramEnabledRow
+        case false?:
+          deepgramKeyEntryRows
+        }
+        if let error = store.deepgramKeyError {
+          Label(error, systemImage: "exclamationmark.triangle")
+            .foregroundStyle(.red)
+        }
+      }
     }
+    .task { store.send(.checkDeepgramKey) }
     .formStyle(.grouped)
     .contentMargins(.trailing, 6, for: .scrollIndicators)
     .padding(.top, -20)
     .padding(.leading, -8)
     .padding(.trailing, -6)
     .navigationTitle("Notifications")
+  }
+
+  private var deepgramEnabledRow: some View {
+    LabeledContent {
+      Button("Remove Key", role: .destructive) {
+        store.send(.removeDeepgramKeyTapped)
+      }
+      .help("Forget the stored Deepgram API key and go back to the built-in macOS voice")
+    } label: {
+      Text("Deepgram Aura-2 voice")
+      Text("Enabled. Read Aloud sends message text to Deepgram and plays its voice.")
+    }
+  }
+
+  @ViewBuilder
+  private var deepgramKeyEntryRows: some View {
+    SecureField(text: $store.deepgramKeyDraft, prompt: Text("Paste your Deepgram API key")) {
+      Text("Deepgram Aura-2 voice")
+      Text("Without a key, Read Aloud uses the built-in macOS voice.")
+    }
+    .onSubmit { store.send(.saveDeepgramKeyTapped) }
+    .disabled(store.isSavingDeepgramKey)
+    LabeledContent {
+      Button {
+        store.send(.saveDeepgramKeyTapped)
+      } label: {
+        if store.isSavingDeepgramKey {
+          ProgressView().controlSize(.small)
+        } else {
+          Text("Save Key")
+        }
+      }
+      .disabled(store.isSavingDeepgramKey || store.deepgramKeyDraft.allSatisfy(\.isWhitespace))
+      .help("Check the key with Deepgram and store it in your Keychain")
+    } label: {
+      Link("Get an API key at console.deepgram.com", destination: DeepgramClient.consoleURL)
+    }
   }
 }
 

@@ -20,9 +20,8 @@ struct SidebarGroupCardFill: View {
   /// than the visible margin it produces.
   static let horizontalInset: CGFloat = 8
   static let verticalInset: CGFloat = 4
-  /// Extra room inside an expanded card: above the header and below the row
-  /// that closes it, so the rows don't sit tight against the card edges.
-  static let expandedHeaderTopSpace: CGFloat = 4
+  /// Extra room below the row that closes an expanded card, so it doesn't sit
+  /// tight against the card edge.
   static let closingRowBottomSpace: CGFloat = 8
 
   let edge: SidebarGroupCardEdge

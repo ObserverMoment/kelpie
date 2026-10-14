@@ -269,6 +269,14 @@ struct AppFeature {
       fleetView.isPresented && fleetView.mode == .mailbox && mailbox.openMessage != nil
     }
 
+    /// The open message's reply box can take the keys, so the Fleet key monitor
+    /// stands aside. A stale session's box is disabled and cannot, so the
+    /// monitor stays on and Escape closes the viewer instead of reaching the
+    /// hidden terminal.
+    var mailViewerTakesKeys: Bool {
+      isShowingMailViewer && mailbox.selectedRow?.isStale == false
+    }
+
     /// What the Read Aloud hotkey reads: while the Mailbox shows, the open
     /// message, else the inbox's focused one, else the selected session's
     /// newest; otherwise the focused pane's newest.
@@ -1832,6 +1840,10 @@ struct AppFeature {
       case .fleetView(.activateFocusedCard) where state.fleetView.mode == .mailbox:
         return .send(.mailbox(.activateFocused))
 
+      case .fleetView(.markFocusedDone) where state.fleetView.mode == .mailbox:
+        guard let messageID = state.mailbox.focusedMessageID else { return .none }
+        return .send(.mailbox(.markDone(messageID)))
+
       case .overlayEscapePressed:
         if state.fleetView.mode == .mailbox, state.mailbox.viewerReturnsToInbox {
           return .send(.mailbox(.viewerClosed))
@@ -1860,10 +1872,6 @@ struct AppFeature {
       case .pods:
         return .none
 
-      case .mailbox(.delegate(.reply(let worktreeID, let surfaceID, let text))):
-        // The quote lands at the prompt without a Return.
-        return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, input: text, state: &state)
-
       case .mailbox(.delegate(.sendReply(let messageID, let surfaceID, let text))):
         // A stale box's agent has exited: the reply would land in the shell and
         // the message would be cleared as if answered.
@@ -1884,7 +1892,7 @@ struct AppFeature {
           state.fleetView.isPresented = false
           return refocusSelectedTerminal(state: state)
         }
-        return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, input: nil, state: &state)
+        return openMailPane(worktreeID: worktreeID, surfaceID: surfaceID, state: &state)
 
       case .mailbox:
         return .none
@@ -2290,7 +2298,6 @@ struct AppFeature {
       case .terminalEvent(.agentHookEventReceived(let event)):
         let mailEffect: Effect<Action> =
           switch event.eventName {
-          case .promptSubmitted: .send(.mailbox(.promptSubmitted(surfaceID: event.surfaceID)))
           case .sessionEnd: .send(.mailbox(.sessionEnded(surfaceID: event.surfaceID)))
           default: .none
           }
@@ -2607,9 +2614,9 @@ struct AppFeature {
   }
 
   /// Straight to a mailbox's pane, like opening a Fleet card: the overlay
-  /// closes and the pane takes focus, with `input` typed but not submitted.
+  /// closes and the pane takes focus.
   private func openMailPane(
-    worktreeID: Worktree.ID, surfaceID: UUID, input: String?, state: inout State
+    worktreeID: Worktree.ID, surfaceID: UUID, state: inout State
   ) -> Effect<Action> {
     guard let worktree = state.repositories.worktree(for: worktreeID),
       let tabID = state.terminals.layouts[id: worktreeID]?.layout
@@ -2620,7 +2627,7 @@ struct AppFeature {
       .send(.repositories(.selectWorktree(worktreeID, focusTerminal: true))),
       .run { _ in
         await terminalClient.send(
-          .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: input, submitsInput: false))
+          .focusSurface(worktree, tabID: tabID, surfaceID: surfaceID, input: nil, submitsInput: false))
       }
     )
   }

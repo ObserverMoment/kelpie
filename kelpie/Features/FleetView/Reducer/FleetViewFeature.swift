@@ -81,6 +81,8 @@ struct FleetViewFeature {
     case columnCountChanged(Int)
     case moveFocus(FleetViewNavigation.Direction)
     case activateFocusedCard
+    /// ⌃⌘↩. Only Mailbox mode acts on it, in `AppFeature`.
+    case markFocusedDone
     case cardTapped(FleetCardID)
     case launcherWorktreeChanged(Worktree.ID?)
     case launcherAgentChanged(SkillAgent)
@@ -136,6 +138,9 @@ struct FleetViewFeature {
       case .activateFocusedCard:
         guard state.isPresented, state.mode == .fleet, let card = state.focusedCard else { return .none }
         return Self.open(card, state: &state)
+
+      case .markFocusedDone:
+        return .none
 
       case .cardTapped(let id):
         guard state.isPresented, let card = state.structure.card(id: id) else { return .none }

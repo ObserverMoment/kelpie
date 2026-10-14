@@ -5730,6 +5730,13 @@ extension RepositoriesFeature.State {
     return selections
   }
 
+  /// What the sidebar list highlights. While a group header holds the ⌃⌘↑/↓
+  /// cursor it is the only highlighted row: the worktree selection stays put
+  /// (its terminal is still open) but hides until the cursor moves back to a row.
+  var visibleSidebarSelections: Set<SidebarSelection> {
+    keyboardFocusedGroupID == nil ? sidebarSelections : []
+  }
+
   var selectedFailedRepositoryID: Repository.ID? {
     selection?.failedRepositoryID
   }

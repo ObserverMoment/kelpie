@@ -24,7 +24,8 @@ struct SidebarHighlightSection: View {
           store: store,
           terminalManager: terminalManager,
           repositoryHighlightByID: repositoryHighlightByID,
-          shortcutHint: shortcutHintByID[rowID]
+          shortcutHint: shortcutHintByID[rowID],
+          countersBelowTitle: kind == .active
         )
       }
     } header: {
@@ -71,6 +72,9 @@ private struct SidebarHighlightRow: View {
   let terminalManager: WorktreeTerminalManager
   let repositoryHighlightByID: [Repository.ID: SidebarHighlightRepoTag]
   let shortcutHint: String?
+  /// Active rows stack their counters under the subtitle so the repo name
+  /// keeps its width.
+  let countersBelowTitle: Bool
 
   var body: some View {
     let highlight =
@@ -84,7 +88,8 @@ private struct SidebarHighlightRow: View {
       hideSubtitle: false,
       moveMode: .alwaysDisabled,
       shortcutHint: shortcutHint,
-      highlightSubtitle: highlight
+      highlightSubtitle: highlight,
+      countersBelowTitle: countersBelowTitle
     )
   }
 }

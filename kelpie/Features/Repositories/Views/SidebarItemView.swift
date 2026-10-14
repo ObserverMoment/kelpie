@@ -16,6 +16,8 @@ enum SidebarNestLayout {
   /// Leading inset of a repository (header and rows) inside a group card, so
   /// its titles read as one column a step in from the group title.
   static let groupMemberIndent: CGFloat = 4
+  /// Vertical inset of a worktree row; the group header cursor pill matches it.
+  static let rowVerticalInset: CGFloat = 4
   /// The branch / pull-request glyph and its check badge, drawn smaller than
   /// the leading slot so the title, not the icon, carries the row.
   static let rowIconSize: CGFloat = 12
@@ -48,6 +50,9 @@ struct SidebarItemView: View {
   var nestDepth: Int = 0
   /// Non-nil only inside the global Pinned / Active sections.
   var highlightSubtitle: SidebarHighlightRepoTag?
+  /// Draws the diff stats and PR number on their own line under the subtitle,
+  /// at the subtitle's size, instead of trailing the title.
+  var countersBelowTitle = false
 
   var body: some View {
     let resolved = ResolvedRowDisplay(
@@ -64,22 +69,28 @@ struct SidebarItemView: View {
     )
 
     Label {
-      HStack(spacing: 8) {
-        TitleView(
-          name: resolved.name,
-          subtitle: resolved.subtitle,
-          accent: resolved.accent,
-          customTint: store.customTint,
-          isLifecycleBusy: store.lifecycle.isBusy,
-          isTaskRunning: store.isTaskRunning
-        )
-        .equatable()
-        Spacer(minLength: 0)
-        TrailingView(
-          store: store,
-          shortcutHint: shortcutHint,
-          showsPullRequestInfo: showsPullRequestInfo
-        )
+      VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: 8) {
+          TitleView(
+            name: resolved.name,
+            subtitle: resolved.subtitle,
+            accent: resolved.accent,
+            customTint: store.customTint,
+            isLifecycleBusy: store.lifecycle.isBusy,
+            isTaskRunning: store.isTaskRunning
+          )
+          .equatable()
+          Spacer(minLength: 0)
+          TrailingView(
+            store: store,
+            shortcutHint: shortcutHint,
+            showsPullRequestInfo: showsPullRequestInfo,
+            showsCounters: !countersBelowTitle
+          )
+        }
+        if countersBelowTitle {
+          CountersLine(store: store, showsPullRequestInfo: showsPullRequestInfo)
+        }
       }
     } icon: {
       IconView(
@@ -95,7 +106,7 @@ struct SidebarItemView: View {
     .labelStyle(.verticallyCentered)
     .listRowInsets(.leading, CGFloat(nestDepth) * SidebarNestLayout.indentStep)
     .listRowInsets(.trailing, 4)
-    .listRowInsets(.vertical, 6)
+    .listRowInsets(.vertical, SidebarNestLayout.rowVerticalInset)
   }
 }
 
@@ -299,7 +310,7 @@ private struct TitleView: View, Equatable {
     let accentStyle = accent.shapeStyle(emphasized: isEmphasized)
     VStack(alignment: .leading, spacing: 0) {
       let titleText = Text(name)
-        .appFont(.body)
+        .appFont(.subheadline)
         .lineLimit(1)
       if let customTint, !isEmphasized {
         titleText.foregroundStyle(customTint.color).shimmer(isActive: isBusy)
@@ -510,26 +521,66 @@ private struct IconContent: View, Equatable {
   }
 }
 
+/// The diff stats and PR number, or nothing when the row has neither.
+private struct RowCounters {
+  let addedLines: Int
+  let removedLines: Int
+  let pullRequestText: String?
+
+  init(store: StoreOf<SidebarItemFeature>, showsPullRequestInfo: Bool) {
+    addedLines = store.addedLines ?? 0
+    removedLines = store.removedLines ?? 0
+    pullRequestText =
+      WorktreePullRequestDisplay(
+        worktreeName: store.branchName,
+        pullRequest: showsPullRequestInfo ? store.pullRequest : nil
+      ).pullRequestBadgeStyle?.text
+  }
+
+  var hasStats: Bool { addedLines + removedLines > 0 }
+  var isEmpty: Bool { !hasStats && pullRequestText == nil }
+}
+
+/// Active rows: the counters under the subtitle, at the subtitle's size, so
+/// the title line keeps its full width for the branch and repo names.
+private struct CountersLine: View {
+  let store: StoreOf<SidebarItemFeature>
+  let showsPullRequestInfo: Bool
+
+  var body: some View {
+    let counters = RowCounters(store: store, showsPullRequestInfo: showsPullRequestInfo)
+    if !counters.isEmpty {
+      HStack(spacing: 6) {
+        if counters.hasStats {
+          DiffStatsContent(addedLines: counters.addedLines, removedLines: counters.removedLines, textStyle: .footnote)
+            .equatable()
+        }
+        if let prText = counters.pullRequestText {
+          PullRequestBadgeContent(text: prText, textStyle: .footnote)
+            .equatable()
+        }
+      }
+    }
+  }
+}
+
 private struct TrailingView: View {
   let store: StoreOf<SidebarItemFeature>
   let shortcutHint: String?
   let showsPullRequestInfo: Bool
+  /// Off when the row draws its counters on a `CountersLine` instead.
+  var showsCounters = true
 
   var body: some View {
     let hasHint = shortcutHint != nil
-    let display = WorktreePullRequestDisplay(
-      worktreeName: store.branchName,
-      pullRequest: showsPullRequestInfo ? store.pullRequest : nil,
-    )
-    let prText = display.pullRequestBadgeStyle?.text
+    let counters = RowCounters(store: store, showsPullRequestInfo: showsPullRequestInfo)
+    let prText = showsCounters ? counters.pullRequestText : nil
     let agents = store.agents
     let scriptColors = store.runningScripts.map(\.tint)
     let showsNotificationIndicator = store.hasUnseenNotifications
     let showsDormantIndicator = store.allTabsDormant
     let notifications = Array(store.notifications)
-    let added = store.addedLines ?? 0
-    let removed = store.removedLines ?? 0
-    let hasStats = added + removed > 0
+    let hasStats = showsCounters && counters.hasStats
     let hasStatus = !scriptColors.isEmpty || showsNotificationIndicator
 
     // Cross-fade via opacity so flipping ⌘ doesn't snap the row.
@@ -547,7 +598,7 @@ private struct TrailingView: View {
           SidebarDormantIndicator()
         }
         if hasStats {
-          DiffStatsContent(addedLines: added, removedLines: removed)
+          DiffStatsContent(addedLines: counters.addedLines, removedLines: counters.removedLines)
             .equatable()
         }
         if let prText {
@@ -599,10 +650,11 @@ private struct SidebarDormantIndicator: View, Equatable {
 
 private struct PullRequestBadgeContent: View, Equatable {
   let text: String
+  var textStyle: Font.TextStyle = .caption
 
   var body: some View {
     Text(text)
-      .appFont(.caption)
+      .appFont(textStyle)
       .foregroundStyle(.secondary)
       .transition(.blurReplace)
   }
@@ -619,11 +671,12 @@ private struct RunningAgentsBadgeContent: View, Equatable {
 private struct DiffStatsContent: View, Equatable {
   let addedLines: Int
   let removedLines: Int
+  var textStyle: Font.TextStyle = .caption
   // `==` ignores @Environment; SwiftUI tracks env changes separately.
   @Environment(\.backgroundProminence) private var backgroundProminence
 
   static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.addedLines == rhs.addedLines && lhs.removedLines == rhs.removedLines
+    lhs.addedLines == rhs.addedLines && lhs.removedLines == rhs.removedLines && lhs.textStyle == rhs.textStyle
   }
 
   var body: some View {
@@ -634,7 +687,7 @@ private struct DiffStatsContent: View, Equatable {
       Text("-\(removedLines)")
         .foregroundStyle(isEmphasized ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
     }
-    .appFont(.caption)
+    .appFont(textStyle)
     .monospacedDigit()
     .transition(.blurReplace)
   }

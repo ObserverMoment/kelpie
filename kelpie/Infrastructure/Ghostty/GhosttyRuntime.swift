@@ -1079,6 +1079,11 @@ extension NSPasteboard {
     return result
   }
 
+  /// File paths as a drop onto the terminal types them: escaped, space-separated.
+  static func ghosttyEscapedPaths(_ urls: [URL]) -> String {
+    urls.map { ghosttyEscape($0.path) }.joined(separator: " ")
+  }
+
   static var ghosttySelection: NSPasteboard = {
     NSPasteboard(name: .init("com.mitchellh.ghostty.selection"))
   }()

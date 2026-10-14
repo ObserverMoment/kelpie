@@ -34,10 +34,6 @@ runs:
       if: ${{ inputs.install-fish == 'true' }}
       shell: bash
       run: brew list fish >/dev/null 2>&1 || brew install fish
-    - name: Authenticate with Tuist
-      if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-      shell: bash
-      run: mise exec -- tuist auth login
     - name: Xcode cache key
       shell: bash
       run: |

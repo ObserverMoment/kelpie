@@ -28,8 +28,8 @@ struct MailboxView: View {
         store.send(.markDone(message.id))
       } onReadAloud: {
         store.send(.readAloudToggled(message.id))
-      } onSend: { text in
-        store.send(.replySent(message.id, text: text))
+      } onSend: { text, attachments in
+        store.send(.replySent(message.id, text: text, attachments: attachments))
       }
       // A draft belongs to its message.
       .id(message.id)
@@ -56,6 +56,9 @@ struct MailboxView: View {
         .tag(row.id)
     }
     .listStyle(.sidebar)
+    // Outside a split view the sidebar material blends with the desktop behind
+    // the window; drop it so the list sits on Fleet's window background.
+    .scrollContentBackground(.hidden)
     .focused($isSessionListFocused)
     .onChange(of: store.focusedMessageID == nil, initial: true) { _, isOnSessionList in
       isSessionListFocused = isOnSessionList
@@ -90,8 +93,6 @@ struct MailboxView: View {
                     store.send(.messageOpened(message.id))
                   } onDone: {
                     store.send(.markDone(message.id))
-                  } onReply: {
-                    store.send(.replyTapped(message.id))
                   }
                   .id(message.id)
                   Divider()
@@ -181,7 +182,6 @@ private struct MailMessageRow: View {
   let isFocused: Bool
   let onOpen: () -> Void
   let onDone: () -> Void
-  let onReply: () -> Void
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
@@ -197,11 +197,6 @@ private struct MailMessageRow: View {
             Text(message.createdAt, format: .dateTime.hour().minute())
               .appFont(.caption)
               .foregroundStyle(.secondary)
-            if message.isReplying {
-              Label("Replying", systemImage: "arrowshape.turn.up.left")
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-            }
           }
           Text(message.body)
             .appFont(.body, monospaced: true)
@@ -214,14 +209,10 @@ private struct MailMessageRow: View {
       .buttonStyle(.plain)
       .help("Open this message (Return)")
       .accessibilityIdentifier("mailMessageOpen")
-      HStack(spacing: 4) {
-        Button("Done", systemImage: "checkmark", action: onDone)
-          .help("Mark as done and remove from the inbox")
-        Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply)
-          .help("Reply in the session with this message quoted")
-      }
-      .labelStyle(.iconOnly)
-      .buttonStyle(.borderless)
+      Button("Done", systemImage: "checkmark", action: onDone)
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .help("Mark as done and remove from the inbox (⌃⌘↩)")
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 12)
@@ -244,12 +235,15 @@ private struct MailMessageViewer: View {
   let onClose: () -> Void
   let onDone: () -> Void
   let onReadAloud: () -> Void
-  let onSend: (String) -> Void
+  let onSend: (String, [URL]) -> Void
   @Shared(.settingsFile) private var settingsFile
+  @State private var attachments: [URL] = []
+  @State private var isDropTargeted = false
 
   /// Shared by the message and the reply box so they line up.
   fileprivate static let columnWidth: CGFloat = 820
   fileprivate static let columnPadding: CGFloat = 32
+  fileprivate static let replyBoxCornerRadius: CGFloat = 8
 
   var body: some View {
     VStack(spacing: 0) {
@@ -278,8 +272,8 @@ private struct MailMessageViewer: View {
         )
         .help("Read this message aloud, or stop (\(readAloudShortcut))")
         Button("Done", systemImage: "checkmark", action: onDone)
-          .keyboardShortcut(.return, modifiers: [.command, .option])
-          .help("Mark as done and remove from the inbox (⌥⌘↩)")
+          .keyboardShortcut(.return, modifiers: [.command, .control])
+          .help("Mark as done and remove from the inbox (⌃⌘↩)")
       }
       .buttonStyle(.borderless)
       .appFont(.body)
@@ -299,8 +293,24 @@ private struct MailMessageViewer: View {
           .frame(maxWidth: .infinity, alignment: .center)
       }
       .safeAreaInset(edge: .bottom, spacing: 0) {
-        ReplyBox(isAgentRunning: isAgentRunning, onSend: onSend)
+        ReplyBox(isAgentRunning: isAgentRunning, attachments: $attachments, onSend: onSend)
       }
+    }
+    // Files dropped anywhere on the viewer attach to the reply. While a drag is
+    // over it this covers the reply field too: a focused field's editor takes
+    // file drops itself and would type the path instead.
+    .overlay {
+      if isDropTargeted {
+        Rectangle().fill(.tint.quaternary)
+      }
+    }
+    .dropDestination(for: URL.self) { urls, _ in
+      let files = urls.filter(\.isFileURL)
+      guard isAgentRunning, !files.isEmpty else { return false }
+      attachments.append(contentsOf: files.filter { !attachments.contains($0) })
+      return true
+    } isTargeted: { isTargeted in
+      isDropTargeted = isTargeted && isAgentRunning
     }
     .accessibilityIdentifier("mailMessageViewer")
   }
@@ -315,11 +325,13 @@ private struct MailMessageViewer: View {
 private struct ReplyBox: View {
   /// A stale session's agent has exited, so there is no one to reply to.
   let isAgentRunning: Bool
-  let onSend: (String) -> Void
+  /// Files dropped on the viewer, sent as paths after the text.
+  @Binding var attachments: [URL]
+  let onSend: (String, [URL]) -> Void
   @State private var draft = ""
   @FocusState private var isFocused: Bool
 
-  private var isDraftBlank: Bool { draft.allSatisfy(\.isWhitespace) }
+  private var isBlank: Bool { attachments.isEmpty && draft.allSatisfy(\.isWhitespace) }
 
   private var placeholder: String {
     isAgentRunning ? "Reply to the agent" : "No agent is running in this session"
@@ -328,34 +340,87 @@ private struct ReplyBox: View {
   var body: some View {
     VStack(spacing: 0) {
       Divider()
-      HStack(alignment: .bottom, spacing: 8) {
-        TextField(placeholder, text: $draft, axis: .vertical)
-          .lineLimit(3...10)
-          .textFieldStyle(.roundedBorder)
-          .appFont(.body)
-          .focused($isFocused)
-          .onSubmit(send)
-          .disabled(!isAgentRunning)
-          .help("Reply to the agent: Return sends and marks done, ⌥Return adds a line")
-          .accessibilityIdentifier("mailReplyField")
-        Button("Send", systemImage: "arrow.up.circle.fill", action: send)
-          .labelStyle(.iconOnly)
-          .buttonStyle(.borderless)
-          .appFont(.title2)
-          .disabled(!isAgentRunning || isDraftBlank)
-          .help("Send the reply and mark the message done (Return)")
+      VStack(alignment: .leading, spacing: 8) {
+        if !attachments.isEmpty {
+          ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+              ForEach(attachments, id: \.self) { url in
+                AttachmentChip(url: url) { attachments.removeAll { $0 == url } }
+              }
+            }
+          }
+        }
+        HStack(alignment: .bottom, spacing: 8) {
+          TextField(placeholder, text: $draft, axis: .vertical)
+            .lineLimit(4...10)
+            .textFieldStyle(.plain)
+            .appFont(.body)
+            .focused($isFocused)
+            .onSubmit(send)
+            .disabled(!isAgentRunning)
+            .help("Reply to the agent: Return sends and marks done, ⌥Return adds a line, drop files to attach them")
+            .accessibilityIdentifier("mailReplyField")
+          Button("Send", systemImage: "arrow.up", action: send)
+            .labelStyle(.titleAndIcon)
+            .buttonStyle(.borderedProminent)
+            .appFont(.body)
+            .disabled(!isAgentRunning || isBlank)
+            .help("Send the reply and mark the message done (Return); type a reply or drop files first")
+        }
       }
+      .padding(10)
+      .background(
+        Color(nsColor: .textBackgroundColor),
+        in: RoundedRectangle(cornerRadius: MailMessageViewer.replyBoxCornerRadius)
+      )
+      .overlay(RoundedRectangle(cornerRadius: MailMessageViewer.replyBoxCornerRadius).strokeBorder(.separator))
       .frame(maxWidth: MailMessageViewer.columnWidth)
       .padding(.horizontal, MailMessageViewer.columnPadding)
-      .padding(.vertical, 12)
+      .padding(.top, 12)
+      .padding(.bottom, 24)
       .frame(maxWidth: .infinity, alignment: .center)
     }
     .background(Color(nsColor: .controlBackgroundColor))
-    .onAppear { isFocused = true }
+    // `.task`, not `.onAppear`: the field must be in the window before it can
+    // take focus, or focus stays on the hidden terminal and Escape goes there.
+    .task { isFocused = true }
   }
 
   private func send() {
-    guard !isDraftBlank else { return }
-    onSend(draft)
+    guard !isBlank else { return }
+    onSend(draft, attachments)
+  }
+}
+
+/// A dropped file waiting to go with the reply.
+private struct AttachmentChip: View {
+  let url: URL
+  let onRemove: () -> Void
+  /// Looked up once per file: the box re-renders its chips on every keystroke.
+  @State private var icon: NSImage?
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Image(nsImage: icon ?? NSImage())
+        .resizable()
+        .frame(width: 16, height: 16)
+        // The file name beside it says the same.
+        .accessibilityHidden(true)
+      Text(url.lastPathComponent)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .frame(maxWidth: 180, alignment: .leading)
+      Button("Remove \(url.lastPathComponent)", systemImage: "xmark.circle.fill", action: onRemove)
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help("Remove \(url.lastPathComponent) from the reply")
+    }
+    .appFont(.caption)
+    .padding(.horizontal, 6)
+    .padding(.vertical, 3)
+    .background(.quaternary, in: Capsule())
+    .help(url.path)
+    .task(id: url) { icon = NSWorkspace.shared.icon(forFile: url.path) }
   }
 }

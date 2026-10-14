@@ -1,11 +1,11 @@
 import ProjectDescription
 
 let tuist = Tuist(
-  fullHandle: "ObserverMoment/kelpie",
   project: .tuist(
     compatibleXcodeVersions: .upToNextMajor("26.0"),
     swiftVersion: "6.0",
     generationOptions: .options(
+      staticSideEffectsWarningTargets: .excluding(["IssueReportingPackageSupport"]),
       optionalAuthentication: true
     ),
     cacheOptions: .options(

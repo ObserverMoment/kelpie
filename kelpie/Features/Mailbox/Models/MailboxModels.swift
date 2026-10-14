@@ -10,9 +10,6 @@ nonisolated struct MailMessage: Identifiable, Equatable, Codable, Sendable {
   let body: String
   let createdAt: Date
   var isRead = false
-  /// A reply quoting this message is staged in the pane's terminal. The next
-  /// prompt submit from that pane marks the message done.
-  var isReplying = false
 }
 
 /// The inbox of one pane, keyed by its surface. Lives as long as the agent

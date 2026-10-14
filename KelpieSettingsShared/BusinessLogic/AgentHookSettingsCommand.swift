@@ -15,8 +15,7 @@ nonisolated enum HookEvent: String, CaseIterable {
   /// Context compaction started (Claude `PreCompact`).
   case compacting
   /// The user submitted a prompt (Claude `UserPromptSubmit`). Carries no
-  /// activity of its own (`busy` travels with it); the Mailbox uses it to mark
-  /// a staged reply as sent.
+  /// activity of its own (`busy` travels with it).
   case promptSubmitted = "prompt_submitted"
 }
 

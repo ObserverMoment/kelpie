@@ -1950,7 +1950,7 @@ extension GhosttySurfaceView {
       return NSPasteboard.ghosttyEscape(urlString)
     }
     if !fileURLs.isEmpty {
-      return fileURLs.map { NSPasteboard.ghosttyEscape($0.path) }.joined(separator: " ")
+      return NSPasteboard.ghosttyEscapedPaths(fileURLs)
     }
     return string
   }

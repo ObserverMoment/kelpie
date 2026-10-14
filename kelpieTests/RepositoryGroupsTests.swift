@@ -640,6 +640,18 @@ struct RepositoryGroupsTests {
     #expect(state.keyboardFocusedGroupID == nil)
   }
 
+  @Test(.dependencies) func aHeaderCursorHidesTheListSelection() {
+    var state = makeGroupedState()
+    state.selection = .worktree(mainA)
+
+    #expect(state.visibleSidebarSelections == [.worktree(mainA)])
+
+    state.keyboardFocusedGroupID = groupID
+
+    #expect(state.visibleSidebarSelections.isEmpty)
+    #expect(state.selectedWorktreeID == mainA)
+  }
+
   @Test(.dependencies) func aSidebarSelectionClearsTheHeaderCursor() async {
     var initial = makeGroupedState()
     initial.selection = .worktree(mainA)

@@ -428,6 +428,9 @@ struct SidebarItemRow: View {
   /// Non-nil while the row is rendered inside the global Pinned / Active
   /// sections; injected as a `repo · worktree` subtitle disambiguator.
   var highlightSubtitle: SidebarHighlightRepoTag?
+  /// Diff stats and the PR number go under the subtitle instead of trailing
+  /// the title; the Active section sets this so the repo name is never squeezed.
+  var countersBelowTitle = false
 
   var body: some View {
     if let itemStore = store.scope(state: \.sidebarItems[id: rowID], action: \.sidebarItems[id: rowID]) {
@@ -441,7 +444,8 @@ struct SidebarItemRow: View {
         shortcutHint: shortcutHint,
         displayNameOverride: displayNameOverride,
         nestDepth: nestDepth,
-        highlightSubtitle: highlightSubtitle
+        highlightSubtitle: highlightSubtitle,
+        countersBelowTitle: countersBelowTitle
       )
     }
   }
@@ -458,6 +462,7 @@ private struct SidebarItemContainer: View {
   var displayNameOverride: String?
   var nestDepth: Int = 0
   var highlightSubtitle: SidebarHighlightRepoTag?
+  var countersBelowTitle = false
   @Shared(.appStorage("worktreeRowHideSubtitleOnMatch")) private var hideSubtitleOnMatch = true
 
   var body: some View {
@@ -472,6 +477,7 @@ private struct SidebarItemContainer: View {
       displayNameOverride: displayNameOverride,
       nestDepth: nestDepth,
       highlightSubtitle: highlightSubtitle,
+      countersBelowTitle: countersBelowTitle,
       hideSubtitleOnMatch: hideSubtitleOnMatch
     )
   }
@@ -488,6 +494,7 @@ private struct SidebarItemBody: View {
   let displayNameOverride: String?
   let nestDepth: Int
   let highlightSubtitle: SidebarHighlightRepoTag?
+  let countersBelowTitle: Bool
   let hideSubtitleOnMatch: Bool
 
   var body: some View {
@@ -508,7 +515,8 @@ private struct SidebarItemBody: View {
       shortcutHint: shortcutHint,
       displayNameOverride: displayNameOverride,
       nestDepth: nestDepth,
-      highlightSubtitle: highlightSubtitle
+      highlightSubtitle: highlightSubtitle,
+      countersBelowTitle: countersBelowTitle
     )
     .environment(\.focusNotificationAction) { notification in
       guard let host = terminalManager.hostIfExists(for: rowID) else {

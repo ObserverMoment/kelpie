@@ -8,6 +8,7 @@ import SwiftUI
 struct ViewSwitcherToolbarControl: View {
   let store: StoreOf<AppFeature>
   @Shared(.settingsFile) private var settingsFile
+  @Environment(\.controlActiveState) private var controlActiveState
 
   static let homeSymbolName = "terminal"
 
@@ -40,8 +41,17 @@ struct ViewSwitcherToolbarControl: View {
       Button {
         store.send(.fleetView(.toggleMailbox))
       } label: {
-        Label("Mailbox", systemImage: unreadMail > 0 ? "envelope.badge" : MailboxView.symbolName)
-          .symbolVariant(showsMailbox ? .fill : .none)
+        Group {
+          if unreadMail > 0 {
+            // Palette keeps the badge dot orange, like the notifications bell.
+            Label("Mailbox", systemImage: "envelope.badge")
+              .symbolRenderingMode(.palette)
+              .foregroundStyle(.orange, envelopeBodyStyle)
+          } else {
+            Label("Mailbox", systemImage: MailboxView.symbolName)
+          }
+        }
+        .symbolVariant(showsMailbox ? .fill : .none)
       }
       .help(
         "Mailbox: messages from your agent sessions, \(unreadMail) unread "
@@ -57,6 +67,13 @@ struct ViewSwitcherToolbarControl: View {
       .help("Home: the sidebar and terminals (\(Self.shortcut(AppShortcuts.showStandardView, overrides)))")
       .accessibilityIdentifier("homeViewToolbarButton")
     }
+  }
+
+  // Envelope body for the unread `envelope.badge` variant: palette can't inherit
+  // the automatic window-key dim, so it drops to secondary by hand when the
+  // window isn't key, matching the notifications bell.
+  private var envelopeBodyStyle: AnyShapeStyle {
+    controlActiveState == .key ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
   }
 
   private static func shortcut(_ shortcut: AppShortcut, _ overrides: [AppShortcutID: AppShortcutOverride]) -> String {

@@ -6,7 +6,8 @@ import SwiftUI
 /// not rely on SwiftUI focus: every keystroke in this window is decided by
 /// `FleetViewKeyDecision` before AppKit dispatches it. Command chords are
 /// offered to the menu bar and otherwise dropped (so ⌘V cannot paste into the
-/// hidden terminal); everything else is consumed. `isActive` turns the monitor
+/// hidden terminal), except ⌃⌘↩, which marks the focused Mailbox message done
+/// when no menu item claims it; everything else is consumed. `isActive` turns the monitor
 /// into a bystander during the exit transition, so the terminal the user just
 /// opened receives its first keystrokes.
 struct FleetViewKeyMonitor: NSViewRepresentable {
@@ -69,6 +70,14 @@ struct FleetViewKeyMonitor: NSViewRepresentable {
             _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
           case .swallow:
             break
+          case .markDone:
+            // A held key must not clear message after message, nor carry a
+            // press from the viewer's Done button into the inbox behind it.
+            guard !event.isARepeat else { break }
+            // A menu item the user bound to ⌃⌘↩ wins over Done.
+            let isClaimedByMenu = NSApp.mainMenu?.performKeyEquivalent(with: event) == true
+            guard !isClaimedByMenu else { break }
+            self.onDecision(decision)
           case .move, .activate, .dismiss:
             self.onDecision(decision)
           }

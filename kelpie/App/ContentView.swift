@@ -92,13 +92,14 @@ struct ContentView: View {
       // Off in the pod workspace and the mail viewer: their terminals and reply
       // box take every keystroke, Escape included.
       FleetViewKeyMonitor(
-        isActive: store.fleetView.isPresented && !store.fleetView.isShowingPodWorkspace && !store.isShowingMailViewer
+        isActive: store.fleetView.isPresented && !store.fleetView.isShowingPodWorkspace && !store.mailViewerTakesKeys
       ) {
         decision in
         switch decision {
         case .move(let direction): store.send(.fleetView(.moveFocus(direction)))
         case .activate: store.send(.fleetView(.activateFocusedCard))
         case .dismiss: store.send(.overlayEscapePressed)
+        case .markDone: store.send(.fleetView(.markFocusedDone))
         case .swallow, .menuShortcut: break
         }
       }

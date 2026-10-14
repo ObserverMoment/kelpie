@@ -192,6 +192,12 @@ public nonisolated enum KelpiePaths {
     configBaseDirectory.appending(path: "routes.json", directoryHint: .notDirectory)
   }
 
+  /// The per-pane inboxes of agent messages. Per build, like the config, so
+  /// Kelpie Dev never reads or rewrites the Release app's mail.
+  public static var mailboxesURL: URL {
+    configBaseDirectory.appending(path: "mailboxes.json", directoryHint: .notDirectory)
+  }
+
   /// Installed agent integrations (default + custom), reconciled against disk.
   public static var agentsURL: URL {
     configBaseDirectory.appending(path: "agents.json", directoryHint: .notDirectory)
@@ -220,10 +226,6 @@ public nonisolated enum KelpiePaths {
   }
 
   /// Legacy `~/.kelpie/layouts.json`, read once by the relocation migrator.
-  public static var mailboxesURL: URL {
-    baseDirectory.appending(path: "mailboxes.json", directoryHint: .notDirectory)
-  }
-
   public static var legacyLayoutsURL: URL {
     baseDirectory.appending(path: "layouts.json", directoryHint: .notDirectory)
   }

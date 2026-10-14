@@ -2,12 +2,15 @@ import AppKit
 
 /// What the Fleet View key monitor does with one keystroke. Command chords are
 /// offered to the menu bar only (the hidden terminal handles ⌘V and friends in
-/// `performKeyEquivalent` otherwise); everything else is either a navigation key
-/// or is swallowed so it never reaches the terminal.
+/// `performKeyEquivalent` otherwise), except ⌃⌘↩, which marks the focused
+/// Mailbox message done; everything else is either a navigation key or is
+/// swallowed so it never reaches the terminal.
 enum FleetViewKeyDecision: Equatable, Sendable {
   case move(FleetViewNavigation.Direction)
   case activate
   case dismiss
+  /// ⌃⌘↩: the focused Mailbox message is done.
+  case markDone
   case swallow
   case menuShortcut
 
@@ -19,6 +22,8 @@ enum FleetViewKeyDecision: Equatable, Sendable {
     modifiers: NSEvent.ModifierFlags
   ) -> FleetViewKeyDecision {
     let userModifiers = modifiers.intersection([.command, .shift, .option, .control])
+    let isReturn = specialKey == .carriageReturn || specialKey == .enter
+    if isReturn, userModifiers == [.command, .control] { return .markDone }
     guard !userModifiers.contains(.command) else { return .menuShortcut }
     guard userModifiers.isEmpty else { return .swallow }
     switch specialKey {

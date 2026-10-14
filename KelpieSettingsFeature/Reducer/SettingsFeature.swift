@@ -1,7 +1,7 @@
 import ComposableArchitecture
 import Foundation
-import Sharing
 import KelpieSettingsShared
+import Sharing
 
 private nonisolated let settingsFeatureLogger = KelpieLogger("Settings")
 
@@ -93,6 +93,12 @@ public struct SettingsFeature {
     /// True when the last registration of the global hotkey failed (chord
     /// unavailable). Transient UI state, never persisted.
     public var globalHotkeyRegistrationFailed = false
+    /// Whether a Deepgram API key is in the Keychain; `nil` until checked.
+    /// Derived from the key itself, never persisted, so it can't drift.
+    public var deepgramKeyIsSet: Bool?
+    public var deepgramKeyDraft = ""
+    public var isSavingDeepgramKey = false
+    public var deepgramKeyError: String?
     public var cliInstallState = CLIInstallState.checking
     /// Installed editors in menu order, resolved once off the picker's body.
     public var installedOpenActions: [OpenWorktreeAction]
@@ -274,6 +280,13 @@ public struct SettingsFeature {
     case repositorySettings(RepositorySettingsFeature.Action)
     case addGlobalScript
     case removeGlobalScript(ScriptDefinition.ID)
+    case checkDeepgramKey
+    case deepgramKeyChecked(Bool)
+    case saveDeepgramKeyTapped
+    case deepgramKeySaved
+    case removeDeepgramKeyTapped
+    case deepgramKeyRemoved
+    case deepgramKeyFailed(String)
     case alert(PresentationAction<Alert>)
     case delegate(Delegate)
     case binding(BindingAction<State>)
@@ -298,6 +311,8 @@ public struct SettingsFeature {
   @Dependency(ArchivedWorktreeDatesClient.self) private var archivedWorktreeDatesClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(NotificationSoundClient.self) private var notificationSoundClient
+  @Dependency(DeepgramKeyStore.self) private var deepgramKeyStore
+  @Dependency(DeepgramClient.self) private var deepgramClient
   @Dependency(\.date.now) private var now
 
   public init() {}
@@ -420,6 +435,68 @@ public struct SettingsFeature {
         state.syncGlobalDefaults()
         synchronizeRepositorySelection(for: &state)
         return .send(.delegate(.settingsChanged(normalizedSettings)))
+
+      case .binding(\.deepgramKeyDraft):
+        // The draft is transient: never written to the settings file.
+        state.deepgramKeyError = nil
+        return .none
+
+      case .checkDeepgramKey:
+        return .run { [deepgramKeyStore] send in
+          let isSet: Bool
+          do {
+            isSet = try deepgramKeyStore.read() != nil
+          } catch {
+            settingsFeatureLogger.warning("Could not read the Deepgram key: \(error.localizedDescription)")
+            isSet = false
+          }
+          await send(.deepgramKeyChecked(isSet))
+        }
+
+      case .deepgramKeyChecked(let isSet):
+        state.deepgramKeyIsSet = isSet
+        return .none
+
+      case .saveDeepgramKeyTapped:
+        let key = state.deepgramKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, !state.isSavingDeepgramKey else { return .none }
+        state.isSavingDeepgramKey = true
+        state.deepgramKeyError = nil
+        return .run { [deepgramClient, deepgramKeyStore] send in
+          do {
+            try await deepgramClient.validate(key)
+            try deepgramKeyStore.write(key)
+            await send(.deepgramKeySaved)
+          } catch {
+            await send(.deepgramKeyFailed(error.localizedDescription))
+          }
+        }
+
+      case .deepgramKeySaved:
+        state.isSavingDeepgramKey = false
+        state.deepgramKeyIsSet = true
+        state.deepgramKeyDraft = ""
+        return .none
+
+      case .removeDeepgramKeyTapped:
+        state.deepgramKeyError = nil
+        return .run { [deepgramKeyStore] send in
+          do {
+            try deepgramKeyStore.delete()
+            await send(.deepgramKeyRemoved)
+          } catch {
+            await send(.deepgramKeyFailed(error.localizedDescription))
+          }
+        }
+
+      case .deepgramKeyRemoved:
+        state.deepgramKeyIsSet = false
+        return .none
+
+      case .deepgramKeyFailed(let message):
+        state.isSavingDeepgramKey = false
+        state.deepgramKeyError = message
+        return .none
 
       case .binding(\.notificationSound):
         let sound = state.notificationSound

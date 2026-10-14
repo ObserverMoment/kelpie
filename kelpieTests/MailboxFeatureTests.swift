@@ -154,29 +154,6 @@ struct MailboxFeatureTests {
     #expect(store.state.openMessageID == id)
   }
 
-  @Test(.dependencies) func replyFlagsMessageAndDelegatesQuote() async {
-    let store = Self.makeStore()
-    let surface = UUID()
-    await Self.deliver(store, surface: surface, "Line one\nmiddle\nLine three")
-    let id = store.state.file.boxes[id: surface]!.messages[0].id
-
-    await store.send(.replyTapped(id))
-    await store.receive(
-      .delegate(
-        .reply(
-          worktreeID: Self.worktreeID, surfaceID: surface,
-          text: "<replying-to>\nLine one\n…\nLine three\n</replying-to>\n\n")))
-    let message = store.state.file.boxes[id: surface]!.messages[0]
-    #expect(message.isReplying)
-    #expect(message.isRead)
-
-    // The prompt submit from that pane completes the reply; other panes don't.
-    await store.send(.promptSubmitted(surfaceID: UUID()))
-    #expect(store.state.file.boxes[id: surface]?.messages.count == 1)
-    await store.send(.promptSubmitted(surfaceID: surface))
-    #expect(store.state.file.boxes[id: surface]?.messages.isEmpty == true)
-  }
-
   @Test(.dependencies) func sessionEndAndPaneCloseDropTheBox() async {
     let store = Self.makeStore()
     let first = UUID()
@@ -268,6 +245,23 @@ struct MailboxFeatureTests {
     #expect(store.state.file.boxes[id: surface]?.messages.map(\.id) == [id])
   }
 
+  @Test(.dependencies) func replyAppendsDroppedFilesAsTheTerminalTypesThem() async {
+    let store = Self.makeStore()
+    let surface = UUID()
+    await Self.deliver(store, surface: surface, "hello")
+    let id = store.state.file.boxes[id: surface]!.messages[0].id
+    let files = [URL(fileURLWithPath: "/tmp/shot one.png"), URL(fileURLWithPath: "/tmp/notes.md")]
+    let quote = MailboxFeature.replyQuote(for: "hello")
+
+    await store.send(.replySent(id, text: " look \n", attachments: files))
+    await store.receive(
+      \.delegate, .sendReply(messageID: id, surfaceID: surface, text: quote + "look /tmp/shot\\ one.png /tmp/notes.md"))
+
+    // Files alone are a reply, with no stray space before them.
+    await store.send(.replySent(id, text: " ", attachments: [files[1]]))
+    await store.receive(\.delegate, .sendReply(messageID: id, surfaceID: surface, text: quote + "/tmp/notes.md"))
+  }
+
   @Test(.dependencies) func blankReplyIsANoOp() async {
     let store = Self.makeStore()
     let surface = UUID()
@@ -276,6 +270,10 @@ struct MailboxFeatureTests {
 
     store.exhaustivity = .on
     await store.send(.replySent(id, text: " \n "))
+  }
+
+  @Test func debugBuildsKeepTheirOwnMailboxes() {
+    #expect(KelpiePaths.mailboxesURL.deletingLastPathComponent().lastPathComponent == "kelpie-dev")
   }
 
   @Test func replyQuoteKeepsShortMessagesWhole() {
@@ -430,19 +428,6 @@ extension MailboxFeatureTests {
 
     await store.send(.markDone(ids[1]))
     #expect(store.state.focusedMessageID == nil)
-  }
-
-  @Test(.dependencies) func submittingAReplyToTheFocusedMessageMovesToItsNeighbour() async {
-    let store = Self.makeStore()
-    let surface = UUID()
-    await Self.deliver(store, surface: surface, "first")
-    await Self.deliver(store, surface: surface, "second")
-    let ids = store.state.file.boxes[id: surface]!.messages.map(\.id)
-
-    await store.send(.moveFocus(.right))
-    await store.send(.replyTapped(ids[0]))
-    await store.send(.promptSubmitted(surfaceID: surface))
-    #expect(store.state.focusedMessageID == ids[1])
   }
 
   @Test(.dependencies) func endingTheSelectedSessionReturnsTheKeysToTheList() async {

@@ -22,6 +22,18 @@ struct FleetViewKeyDecisionTests {
     #expect(Decision.decide(keyCode: 0, specialKey: .leftArrow, modifiers: .control) == .swallow)
   }
 
+  @Test func controlCommandReturnMarksDone() {
+    #expect(Decision.decide(keyCode: 0, specialKey: .carriageReturn, modifiers: [.command, .control]) == .markDone)
+    #expect(Decision.decide(keyCode: 0, specialKey: .enter, modifiers: [.command, .control]) == .markDone)
+    #expect(Decision.decide(keyCode: 0, specialKey: .enter, modifiers: [.command, .control, .numericPad]) == .markDone)
+    #expect(Decision.decide(keyCode: 0, specialKey: nil, modifiers: [.command, .control]) == .menuShortcut)
+    #expect(Decision.decide(keyCode: 0, specialKey: .carriageReturn, modifiers: .command) == .menuShortcut)
+    #expect(Decision.decide(keyCode: 0, specialKey: .carriageReturn, modifiers: [.command, .option]) == .menuShortcut)
+    #expect(
+      Decision.decide(keyCode: 0, specialKey: .carriageReturn, modifiers: [.command, .control, .shift]) == .menuShortcut
+    )
+  }
+
   @Test func commandChordsGoToTheMenuBar() {
     #expect(Decision.decide(keyCode: 0, specialKey: nil, modifiers: .command) == .menuShortcut)
     #expect(Decision.decide(keyCode: 0, specialKey: .leftArrow, modifiers: [.command, .shift]) == .menuShortcut)

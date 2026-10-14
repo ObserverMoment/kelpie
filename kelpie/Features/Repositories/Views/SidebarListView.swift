@@ -22,7 +22,7 @@ struct SidebarListView: View {
   var body: some View {
     let state = store.state
     let structure = state.sidebarStructure
-    let currentSelections = state.sidebarSelections
+    let currentSelections = state.visibleSidebarSelections
     let selection = Binding<Set<SidebarSelection>>(
       get: { currentSelections },
       set: { newValue in
@@ -590,10 +590,15 @@ private struct SidebarGroupHeaderRow: View {
   /// sit in the folder's body like the toolbar symbol's grid.
   private static let groupGlyphDotsScale: CGFloat = 0.8
   private static let groupGlyphDotsDrop: CGFloat = 1.5
-  /// The ⌃⌘↑/↓ cursor fill: its corner radius, and how far it reaches past the
-  /// label so it reads as a selected row.
+  /// The ⌃⌘↑/↓ cursor fill: its corner radius, how far it reaches past the
+  /// label, and the vertical room inside it, matched to a worktree row's
+  /// insets so the pill is as tall as a selected row.
   private static let cursorCornerRadius: CGFloat = 5
-  private static let cursorOutset = CGSize(width: 4, height: 2)
+  private static let cursorHorizontalOutset: CGFloat = 4
+  private static let cursorVerticalPadding: CGFloat = SidebarNestLayout.rowVerticalInset
+  /// Room between the pill and the card edge: the card's own inset from the
+  /// row, plus the sliver of card that shows around a selected row.
+  private static let cardEdgeSpace: CGFloat = SidebarGroupCardFill.verticalInset + 2
 
   let groupID: RepositoryGroupID
   let name: String
@@ -666,23 +671,21 @@ private struct SidebarGroupHeaderRow: View {
       }
       .help(isCollapsed ? "Expand group" : "Collapse group")
     }
-    // The ⌃⌘↑/↓ cursor, drawn like a selected row.
+    // Row-height padding sits inside the pill so the ⌃⌘↑/↓ cursor, drawn like
+    // a selected row, is as tall as one.
+    .padding(.vertical, Self.cursorVerticalPadding)
     .background {
       if isKeyboardFocused {
         RoundedRectangle(cornerRadius: Self.cursorCornerRadius)
           .fill(.selection)
-          .padding(.horizontal, -Self.cursorOutset.width)
-          .padding(.vertical, -Self.cursorOutset.height)
+          .padding(.horizontal, -Self.cursorHorizontalOutset)
       }
     }
     .accessibilityAddTraits(isKeyboardFocused ? .isSelected : [])
-    // Top padding matches the card's top margin so the title sits inside it; a
-    // collapsed group has no padding row below, so the header pads itself.
-    .padding(
-      .top,
-      SidebarGroupCardFill.verticalInset + 2 + (isCollapsed ? 0 : SidebarGroupCardFill.expandedHeaderTopSpace)
-    )
-    .padding(.bottom, isCollapsed ? SidebarGroupCardFill.verticalInset + 2 : 2)
+    // The title sits inside the card's top margin; a collapsed group has no
+    // rows below to close the card, so its header pads the bottom too.
+    .padding(.top, Self.cardEdgeSpace)
+    .padding(.bottom, isCollapsed ? Self.cardEdgeSpace : 0)
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }
     .alert("Rename Group", isPresented: $isRenaming) {
@@ -730,7 +733,7 @@ private struct SidebarGroupedRepositoryHeaderRow: View {
       )
       .opacity(isHovered ? 1 : 0)
     }
-    .padding(.vertical, 2)
+    .padding(.top, 2)
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }
   }

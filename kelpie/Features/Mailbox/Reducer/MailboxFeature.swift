@@ -1,3 +1,4 @@
+import AppKit
 import ComposableArchitecture
 import Foundation
 import KelpieSettingsShared
@@ -93,18 +94,15 @@ struct MailboxFeature {
     /// when nothing is reading and there is no message.
     case readAloudToggled(MailMessage.ID?)
     case readAloudFinished
-    /// The viewer's reply box: sends the quoted reply to the session; the
-    /// message is done once it lands. No-op for a blank reply.
-    case replySent(MailMessage.ID, text: String)
+    /// The viewer's reply box: sends the quoted reply, with any dropped files'
+    /// paths after it, to the session; the message is done once it lands.
+    /// No-op when both are blank.
+    case replySent(MailMessage.ID, text: String, attachments: [URL] = [])
     /// The overlay closed: a viewer opened from a pane closes with it, so the
     /// inbox shows next time.
     case overlayDismissed
     /// The tick: the message leaves the inbox.
     case markDone(MailMessage.ID)
-    /// Stages a reply in the pane; the message stays, flagged, until the prompt
-    /// is submitted.
-    case replyTapped(MailMessage.ID)
-    case promptSubmitted(surfaceID: UUID)
     case sessionEnded(surfaceID: UUID)
     case surfacesClosed(Set<UUID>)
     case closeStaleMailbox(UUID)
@@ -113,8 +111,6 @@ struct MailboxFeature {
 
   @CasePathable
   enum Delegate: Equatable {
-    /// Open the pane and insert `text` at the prompt, without submitting.
-    case reply(worktreeID: Worktree.ID, surfaceID: UUID, text: String)
     /// A viewer opened from a pane closed: leave the overlay for that pane.
     case closedToPane(worktreeID: Worktree.ID, surfaceID: UUID)
     /// Deliver `text` to the session and submit it, then mark the message done.
@@ -207,8 +203,11 @@ struct MailboxFeature {
         state.isReadingAloud = false
         return .none
 
-      case .replySent(let messageID, let text):
-        let reply = text.trimmingCharacters(in: .whitespacesAndNewlines)
+      case .replySent(let messageID, let text, let attachments):
+        let paths = NSPasteboard.ghosttyEscapedPaths(attachments)
+        let reply = [text.trimmingCharacters(in: .whitespacesAndNewlines), paths]
+          .filter { !$0.isEmpty }
+          .joined(separator: " ")
         guard !reply.isEmpty, let surfaceID = state.file.surfaceID(containing: messageID),
           let message = state.file.message(messageID)
         else { return .none }
@@ -226,33 +225,6 @@ struct MailboxFeature {
         state.$file.withLock { $0.remove(messageID) }
         state.reconcileFocusedMessage(previous: previous)
         return effect
-
-      case .replyTapped(let messageID):
-        guard let surfaceID = state.file.surfaceID(containing: messageID),
-          let box = state.file.boxes[id: surfaceID],
-          let message = box.messages.first(where: { $0.id == messageID })
-        else { return .none }
-        state.openMessageID = nil
-        state.$file.withLock { file in
-          file.update(messageID) {
-            $0.isRead = true
-            $0.isReplying = true
-          }
-        }
-        return .send(
-          .delegate(.reply(worktreeID: box.worktreeID, surfaceID: surfaceID, text: Self.replyQuote(for: message.body))))
-
-      case .promptSubmitted(let surfaceID):
-        guard let box = state.file.boxes[id: surfaceID], box.messages.contains(where: \.isReplying) else {
-          return .none
-        }
-        if let open = state.openMessageID, box.messages.contains(where: { $0.id == open && $0.isReplying }) {
-          state.openMessageID = nil
-        }
-        let previous = state.selectedMessageIDs
-        state.$file.withLock { $0.boxes[id: surfaceID]?.messages.removeAll(where: \.isReplying) }
-        state.reconcileFocusedMessage(previous: previous)
-        return .none
 
       case .sessionEnded(let surfaceID), .closeStaleMailbox(let surfaceID):
         return Self.removeBoxes([surfaceID], state: &state)
@@ -304,9 +276,9 @@ struct MailboxFeature {
   /// not the whole paragraph.
   static let quotedLineCharacterCap = 160
 
-  /// What the reply inserts at the prompt: the first and last lines of the
-  /// message, enough for the agent to place it, then a blank line for the
-  /// cursor. Newlines travel inside a bracketed paste, so nothing submits.
+  /// What a sent reply starts with: the first and last lines of the message,
+  /// enough for the agent to place it, then a blank line before the reply.
+  /// Newlines travel inside a bracketed paste, so nothing submits early.
   static func replyQuote(for body: String) -> String {
     let lines =
       body
