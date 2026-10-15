@@ -36,11 +36,44 @@ public nonisolated struct KeychainError: LocalizedError, Equatable {
 }
 
 extension DeepgramKeyStore: DependencyKey {
-  public static let liveValue = DeepgramKeyStore(
-    read: { try DeepgramKeychainItem.read() },
-    write: { key in try DeepgramKeychainItem.write(key) },
-    delete: { try DeepgramKeychainItem.delete() }
+  public static let liveValue = DeepgramKeyStore.caching(
+    DeepgramKeyStore(
+      read: { try DeepgramKeychainItem.read() },
+      write: { key in try DeepgramKeychainItem.write(key) },
+      delete: { try DeepgramKeychainItem.delete() }
+    )
   )
+
+  /// Reads `base` once and answers from memory after that, so a locked
+  /// Keychain can only ever delay the first read, never a Read Aloud click.
+  /// The base read runs outside the lock: it can block on the unlock prompt,
+  /// and a save or removal meanwhile must not wait behind it.
+  static func caching(_ base: DeepgramKeyStore) -> DeepgramKeyStore {
+    let cache = LockIsolated(CachedKey.unread)
+    return DeepgramKeyStore(
+      read: {
+        if case .known(let key) = cache.value { return key }
+        let key = try base.read()
+        cache.withValue { cached in
+          if case .unread = cached { cached = .known(key) }
+        }
+        return key
+      },
+      write: { key in
+        try base.write(key)
+        cache.setValue(.known(key))
+      },
+      delete: {
+        try base.delete()
+        cache.setValue(.known(nil))
+      }
+    )
+  }
+
+  private enum CachedKey {
+    case unread
+    case known(String?)
+  }
 
   public static let testValue = DeepgramKeyStore(read: { nil }, write: { _ in }, delete: {})
 }

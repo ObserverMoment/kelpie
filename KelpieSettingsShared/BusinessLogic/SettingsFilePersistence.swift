@@ -115,7 +115,7 @@ public nonisolated final class SettingsStoreHealth: @unchecked Sendable {
   }
 
   public func markHealthy(_ urls: SettingsFileURLs) {
-    lock.withLock { degraded.remove(Self.key(urls)) }
+    lock.withLock { _ = degraded.remove(Self.key(urls)) }
   }
 
   public func isDegraded(_ urls: SettingsFileURLs) -> Bool {

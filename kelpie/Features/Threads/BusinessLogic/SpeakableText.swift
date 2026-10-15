@@ -23,7 +23,22 @@ nonisolated enum SpeakableText {
   /// sentences where possible so every piece reads naturally on its own. A
   /// sentence over the limit breaks at words, and a word over it at characters.
   static func chunks(_ text: String, maxLength: Int) -> [String] {
-    pack(sentences(in: text), maxLength: maxLength) { sentence in
+    chunks(sentences: sentences(in: text), maxLength: maxLength)
+  }
+
+  /// Like `chunks(_:maxLength:)`, but the first piece is the opening sentence,
+  /// split if longer than `firstMaxLength`: the first request to a speech
+  /// service is the one the user waits for, and a shorter one is answered sooner.
+  static func chunks(_ text: String, firstMaxLength: Int, maxLength: Int) -> [String] {
+    let units = sentences(in: text)
+    guard let opening = units.first else { return [] }
+    let openingPieces = chunks(sentences: [opening], maxLength: firstMaxLength)
+    let rest = Array(openingPieces.dropFirst()) + units.dropFirst()
+    return Array(openingPieces.prefix(1)) + chunks(sentences: rest, maxLength: maxLength)
+  }
+
+  private static func chunks(sentences: [String], maxLength: Int) -> [String] {
+    pack(sentences, maxLength: maxLength) { sentence in
       pack(sentence.split(separator: " ").map(String.init), maxLength: maxLength) { word in
         slices(of: word, maxLength: maxLength)
       }

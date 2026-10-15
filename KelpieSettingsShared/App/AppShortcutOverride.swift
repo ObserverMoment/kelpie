@@ -313,7 +313,7 @@ extension AppShortcutOverride {
 
   // Uncached resolution walks 4 modifier states x 47 key codes through
   // UCKeyTranslate; per-event matching would be a TIS storm without this.
-  private static let reverseKeyCodeCache = Mutex<[Character: UInt16?]>([:])
+  private nonisolated static let reverseKeyCodeCache = Mutex<[Character: UInt16?]>([:])
 
   private static let reverseKeyCodeCacheInvalidator: NSObjectProtocol =
     NotificationCenter.default.addObserver(

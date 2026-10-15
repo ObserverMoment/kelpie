@@ -1,0 +1,22 @@
+Rename pkg/dcimgui/ext.cpp so its object file is not named ext.o: libghostty.a
+already has an ext.o from pkg/macos/text/ext.c, and dsymutil resolves the
+duplicate member name to the wrong object, warning that it "could not find
+symbol '_ImFontConfig_ImFontConfig' in object file libghostty.a(ext.o)" on
+every Release build.
+
+diff --git a/pkg/dcimgui/ext.cpp b/pkg/dcimgui/cimgui_ext.cpp
+similarity index 100%
+rename from pkg/dcimgui/ext.cpp
+rename to pkg/dcimgui/cimgui_ext.cpp
+diff --git a/pkg/dcimgui/build.zig b/pkg/dcimgui/build.zig
+--- a/pkg/dcimgui/build.zig
++++ b/pkg/dcimgui/build.zig
+@@ -175,7 +175,7 @@
+         });
+         lib.addCSourceFiles(.{
+             .root = b.path(""),
+-            .files = &.{"ext.cpp"},
++            .files = &.{"cimgui_ext.cpp"},
+             .flags = flags.items,
+         });
+ 

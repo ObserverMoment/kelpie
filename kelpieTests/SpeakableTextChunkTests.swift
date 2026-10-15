@@ -38,4 +38,22 @@ struct SpeakableTextChunkTests {
     #expect(
       chunks.joined(separator: " ").split(separator: " ").count == text.split(whereSeparator: \.isWhitespace).count)
   }
+
+  @Test func firstChunkHonoursItsOwnShorterLimit() {
+    let chunks = SpeakableText.chunks("One. Two. Three. Four.", firstMaxLength: 4, maxLength: 20)
+    #expect(chunks == ["One.", "Two. Three. Four."])
+  }
+
+  @Test func anOverlongOpeningSentenceSplitsAtWordsAndTheRestRepacks() {
+    let chunks = SpeakableText.chunks("alpha beta gamma delta. Two. Three.", firstMaxLength: 10, maxLength: 30)
+    #expect(chunks == ["alpha beta", "gamma delta. Two. Three."])
+  }
+
+  @Test func firstChunkLimitWithEmptyTextGivesNoChunks() {
+    #expect(SpeakableText.chunks("", firstMaxLength: 4, maxLength: 20) == [])
+  }
+
+  @Test func firstChunkIsOnlyTheOpeningSentenceEvenWhenMoreWouldFit() {
+    #expect(SpeakableText.chunks("One. Two.", firstMaxLength: 20, maxLength: 20) == ["One.", "Two."])
+  }
 }

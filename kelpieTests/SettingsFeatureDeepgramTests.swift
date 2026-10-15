@@ -26,7 +26,8 @@ struct SettingsFeatureDeepgramTests {
         write: write ?? { key in keychain.setValue(key) },
         delete: delete ?? { keychain.setValue(nil) }
       )
-      $0[DeepgramClient.self] = DeepgramClient(validate: validate, synthesize: { _, _ in Data() })
+      $0[DeepgramClient.self] = DeepgramClient(
+        validate: validate, synthesize: DeepgramClient.testValue.synthesize)
     }
     return (store, keychain)
   }
