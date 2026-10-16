@@ -104,7 +104,7 @@ enum PaneWindowShortcut {
       AppShortcuts.focusSplitLeft, AppShortcuts.focusSplitRight,
       AppShortcuts.focusSplitUp, AppShortcuts.focusSplitDown,
       AppShortcuts.toggleSplitZoom, AppShortcuts.equalizeSplits, AppShortcuts.showLastAgentMessage,
-      AppShortcuts.readLastAgentMessageAloud,
+      AppShortcuts.readLastAgentMessageAloud, AppShortcuts.showThread,
     ]
     if unavailable.contains(where: matched) {
       return .ignore
@@ -619,6 +619,7 @@ private struct WindowedPaneRootView: View {
         .focusedAction(\.equalizeSplitsAction, enabled: false) {}
         .focusedAction(\.showLastAgentMessageAction, enabled: false) {}
         .focusedAction(\.readLastAgentMessageAloudAction, enabled: false) {}
+        .focusedAction(\.showThreadAction, enabled: false) {}
         .focusedSceneAction(\.toggleWindowModeAction, enabled: true, token: paneID.rawValue) {
           guard windowIsKey() else { return }
           store.send(.exitWindowMode(paneID: paneID))

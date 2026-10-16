@@ -84,6 +84,9 @@ final class TerminalTabChrome: TabChrome {
   /// Reads the pane's newest message aloud, or stops; installed with
   /// `showLastMessage`.
   @ObservationIgnored var readLastMessageAloud: (() -> Void)?
+  /// Opens the pane's thread in Threads (its pod's thread when it is a
+  /// member); installed with `showLastMessage`.
+  @ObservationIgnored var showThread: (() -> Void)?
 
   var stripActions: [TabStripAction] {
     guard hasMail else { return [] }
@@ -97,6 +100,11 @@ final class TerminalTabChrome: TabChrome {
         TabStripAction(
           title: "Read Last Agent Message Aloud or Stop", systemImage: "speaker.wave.2",
           shortcut: AppShortcuts.readLastAgentMessageAloud, perform: $0)
+      },
+      showThread.map {
+        TabStripAction(
+          title: "Show Thread", systemImage: ThreadsView.symbolName,
+          shortcut: AppShortcuts.showThread, perform: $0)
       },
     ].compactMap(\.self)
   }

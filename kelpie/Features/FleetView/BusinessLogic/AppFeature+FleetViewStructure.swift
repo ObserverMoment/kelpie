@@ -8,12 +8,15 @@ extension AppFeature.Action {
   var affectsFleetViewStructure: Bool {
     switch self {
     case .repositories(let inner):
-      return !inner.cacheInvalidations.isEmpty
-    // Moving the Pods or Threads cursor reads the structure and changes none of its inputs.
-    case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember), .threads(.moveFocus),
+      return inner.cacheInvalidations.changesStructureInputs
+    // Moving the Pods or Threads cursor, or typing in a ⌘F field, reads the
+    // structure and changes none of its inputs.
+    case .pods(.moveFocus), .pods(.columnCountChanged), .pods(.activateFocusedMember), .pods(.search),
+      .pods(.overlayDismissed),
+      .threads(.tileSearch), .threads(.messageSearch), .threads(.moveFocus),
       .threads(.tileSelected), .threads(.threadSelected), .threads(.podExpansionToggled), .threads(.memberToggled),
       .threads(.activateFocused), .threads(.jumpToFocused), .threads(.readAloudToggled), .threads(.readAloudFinished),
-      .threads(.summaryFailed), .threads(.panelReplyFocusChanged):
+      .threads(.summaryFailed), .threads(.panelReplyFocusChanged), .threads(.panelReplyFocusRequested):
       return false
     // Pods add the pod-name caption and feed Pods mode, which the same pass computes.
     case .agentPresence, .terminals, .fleetView(.toggle), .fleetView(.togglePods), .fleetView(.toggleThreads), .pods,
@@ -35,7 +38,7 @@ extension AppFeature.Action {
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .navigate, .overlayEscapePressed, .sidebarVisibilityChanged,
+      .navigateSearchPrevious, .navigate, .overlayEscapePressed, .overlayTabPressed, .sidebarVisibilityChanged,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
       .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,

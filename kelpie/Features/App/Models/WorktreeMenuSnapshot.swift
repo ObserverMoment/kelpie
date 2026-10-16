@@ -105,7 +105,7 @@ extension AppFeature.Action {
     // canNavigate*, isInitialLoadComplete, selectedWorktreeSlice.pullRequest)
     // changes via an action that already invalidates at least one cache.
     case .repositories(let inner):
-      return !inner.cacheInvalidations.isEmpty
+      return inner.cacheInvalidations.changesStructureInputs
     // Settings can change `shortcutOverrides` or `githubIntegrationEnabled`.
     case .settings:
       return true
@@ -131,6 +131,8 @@ extension AppFeature.Action {
       return false
     // Presenting or closing the overlay flips whether ⌃⌘←/→ have a grid to move
     // in; hiding the sidebar drops a focused group header.
+    case .fleetView(.search):
+      return false
     case .fleetView, .sidebarVisibilityChanged:
       return true
     // Lifecycle / UI / effect-dispatch actions never write snapshot inputs
@@ -149,7 +151,7 @@ extension AppFeature.Action {
       .manageRepositoryScripts,
       .stopScript, .stopRunScripts, .closeTab, .closeSurface,
       .startSearch, .searchSelection, .navigateSearchNext,
-      .navigateSearchPrevious, .navigate, .overlayEscapePressed,
+      .navigateSearchPrevious, .navigate, .overlayEscapePressed, .overlayTabPressed,
       .systemNotificationsPermissionFailed, .deeplinkReceived,
       .deeplink, .commandAckTimedOut, .deeplinkConfirmationTimedOut,
       .deeplinkReferenceOpened, .settingsRelocationDidNotFinish, .settingsStoreUnreadable,

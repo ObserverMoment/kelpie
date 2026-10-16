@@ -59,7 +59,7 @@ struct ThreadsView: View {
 
   private var tiles: some View {
     List(selection: $store.selectedThreadID.sending(\.tileSelected)) {
-      ForEach(store.structure.tiles) { tile in
+      ForEach(store.visibleStructure.tiles) { tile in
         switch tile {
         case .pod(let pod):
           DisclosureGroup(
@@ -96,6 +96,21 @@ struct ThreadsView: View {
     // Outside a split view the sidebar material blends with the desktop behind
     // the window; drop it so the list sits on Fleet's window background.
     .scrollContentBackground(.hidden)
+    .safeAreaInset(edge: .top, spacing: 0) {
+      if store.tileSearch.isPresented {
+        SearchFilterField(
+          store: store.scope(state: \.tileSearch, action: \.tileSearch), subject: "sessions, repos and summaries",
+          surface: "threadTiles"
+        )
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+      }
+    }
+    .overlay {
+      if store.visibleStructure.tiles.isEmpty, let query = store.tileSearch.activeQuery {
+        ContentUnavailableView.search(text: query)
+      }
+    }
     .focused($isTileListFocused)
     .onChange(of: store.focusedMessageID == nil, initial: true) { _, isOnTiles in
       isTileListFocused = isOnTiles
@@ -138,16 +153,18 @@ struct ThreadsView: View {
           }
           Divider()
         }
+        ThreadSummaryCard(summary: store.selectedSummary, isSummarizing: store.isSummarizingSelected)
+        messageSearchBar
         timeline
         ReplyBox(
           isAgentRunning: store.canReplyToDisplayed, attachments: $panelAttachments, focusesOnAppear: false,
+          isCompact: true, isFocusRequested: store.isPanelReplyFocused,
           onFocusChange: { store.send(.panelReplyFocusChanged($0)) },
           onSend: { text, attachments in
             store.send(.threadReplySent(text: text, attachments: attachments))
             panelAttachments = []
           }
         )
-        ThreadSummaryCard(summary: store.selectedSummary, isSummarizing: store.isSummarizingSelected)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {
@@ -156,12 +173,36 @@ struct ThreadsView: View {
     }
   }
 
+  /// The thread's ⌘F field, or the button that opens it by mouse (⌘F reaches
+  /// it only while the keys are on a message).
+  private var messageSearchBar: some View {
+    HStack {
+      if store.messageSearch.isPresented {
+        SearchFilterField(
+          store: store.scope(state: \.messageSearch, action: \.messageSearch), subject: "messages in this thread",
+          surface: "threadMessages")
+      } else {
+        Spacer(minLength: 0)
+        Button("Filter Messages", systemImage: "magnifyingglass") { store.send(.messageSearch(.requested)) }
+          .labelStyle(.iconOnly)
+          .buttonStyle(.borderless)
+          .help("Filter this thread's messages by text (⌘F while a message is focused)")
+      }
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 6)
+  }
+
   /// Oldest at the top, newest at the bottom, and pinned to the bottom as
   /// messages arrive, like a chat.
   @ViewBuilder
   private var timeline: some View {
-    let entries = store.timeline
-    if entries.isEmpty {
+    let entries = store.visibleTimeline
+    let highlightQuery = store.messageSearch.activeQuery
+    if entries.isEmpty, let highlightQuery {
+      ContentUnavailableView.search(text: highlightQuery)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if entries.isEmpty {
       ContentUnavailableView(
         "Thread Empty", systemImage: "tray",
         description: Text("Every message here is done.")
@@ -175,7 +216,8 @@ struct ThreadsView: View {
               MessageTile(
                 entry: entry,
                 isFocused: entry.id == store.focusedMessageID,
-                isExpanded: expandedMessageIDs.contains(entry.id)
+                isExpanded: expandedMessageIDs.contains(entry.id),
+                highlightQuery: highlightQuery
               ) {
                 expandedMessageIDs.formSymmetricDifference([entry.id])
               } onOpen: {
@@ -311,6 +353,8 @@ private struct MessageTile: View {
   /// The arrow keys are on this message.
   let isFocused: Bool
   let isExpanded: Bool
+  /// The thread's ⌘F query: the body renders as plain text with the hits marked.
+  let highlightQuery: String?
   let onToggleExpanded: () -> Void
   let onOpen: () -> Void
   let onDone: () -> Void
@@ -358,13 +402,23 @@ private struct MessageTile: View {
               .help("Mark as done and remove from the thread (⌃⌘↩)")
           }
         }
-        StructuredText(markdown: message.body)
-          .textual.structuredTextStyle(.gitHub)
-          .appFont(.body)
-          .textual.textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .frame(maxHeight: isExpanded ? nil : collapsedHeight, alignment: .top)
-          .clipped()
+        Group {
+          if let highlightQuery {
+            // Plain text while filtering: the markdown renderer has no range
+            // highlighting, and the hits matter more than the formatting.
+            SearchHighlightedText(text: message.body, query: highlightQuery)
+              .appFont(.body)
+              .textSelection(.enabled)
+          } else {
+            StructuredText(markdown: message.body)
+              .textual.structuredTextStyle(.gitHub)
+              .appFont(.body)
+              .textual.textSelection(.enabled)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxHeight: isExpanded ? nil : collapsedHeight, alignment: .top)
+        .clipped()
         if isLong {
           Button(isExpanded ? "Show less" : "Show more", action: onToggleExpanded)
             .buttonStyle(.link)
@@ -501,6 +555,12 @@ private struct ReplyBox: View {
   @Binding var attachments: [URL]
   /// The viewer's box takes the keys as it opens; the thread's waits for a click.
   var focusesOnAppear = true
+  /// The thread panel's box starts one line tall and sits tight to the bottom
+  /// edge, so the timeline above keeps the height.
+  var isCompact = false
+  /// Tab on the overlay's key monitor: the reducer asks the field to take the
+  /// keys, and the field reports back through `onFocusChange`.
+  var isFocusRequested = false
   /// Reports the field taking or giving up the keys, for the overlay's key monitor.
   var onFocusChange: ((Bool) -> Void)?
   let onSend: (String, [URL]) -> Void
@@ -527,15 +587,7 @@ private struct ReplyBox: View {
           }
         }
         HStack(alignment: .bottom, spacing: 8) {
-          TextField(placeholder, text: $draft, axis: .vertical)
-            .lineLimit(4...10)
-            .textFieldStyle(.plain)
-            .appFont(.body)
-            .focused($isFocused)
-            .onSubmit(send)
-            .disabled(!isAgentRunning)
-            .help("Reply to the agent: Return sends, ⌥Return adds a line, drop files to attach them")
-            .accessibilityIdentifier("mailReplyField")
+          field
           Button("Send", systemImage: "arrow.up", action: send)
             .labelStyle(.titleAndIcon)
             .buttonStyle(.borderedProminent)
@@ -552,23 +604,48 @@ private struct ReplyBox: View {
       .overlay(RoundedRectangle(cornerRadius: MailMessageViewer.replyBoxCornerRadius).strokeBorder(.separator))
       .frame(maxWidth: MailMessageViewer.columnWidth)
       .padding(.horizontal, MailMessageViewer.columnPadding)
-      .padding(.top, 12)
-      .padding(.bottom, 24)
+      .padding(.top, isCompact ? 8 : 12)
+      .padding(.bottom, isCompact ? 8 : 24)
       .frame(maxWidth: .infinity, alignment: .center)
     }
     .background(Color(nsColor: .controlBackgroundColor))
     // `.task`, not `.onAppear`: the field must be in the window before it can
     // take focus, or focus stays on the hidden terminal and Escape goes there.
     .task { if focusesOnAppear { isFocused = true } }
+    .onChange(of: isFocusRequested) { _, isRequested in
+      if isRequested != isFocused { isFocused = isRequested }
+    }
     .onChange(of: isFocused) { _, isFocused in onFocusChange?(isFocused) }
     // Leaving the hierarchy while focused reports nothing through onChange.
     .onDisappear { if isFocused { onFocusChange?(false) } }
   }
 
+  private var field: some View {
+    TextField(placeholder, text: $draft, axis: .vertical)
+      .lineLimit(lineLimit)
+      .textFieldStyle(.plain)
+      .appFont(.body)
+      .focused($isFocused)
+      .onSubmit(send)
+      .onKeyPress(keys: [.tab], action: releaseFocusOnShiftTab)
+      .disabled(!isAgentRunning)
+      .help("Reply to the agent: Return sends, ⌥Return adds a line, drop files to attach them")
+      .accessibilityIdentifier("mailReplyField")
+  }
+
+  private var lineLimit: ClosedRange<Int> { (isCompact ? 1 : 4)...10 }
+
   private func send() {
     guard !isBlank else { return }
     onSend(draft, attachments)
     draft = ""
+  }
+
+  /// ⇧Tab gives the keys back to the overlay's key monitor.
+  private func releaseFocusOnShiftTab(_ press: KeyPress) -> KeyPress.Result {
+    guard press.modifiers.contains(.shift) else { return .ignored }
+    isFocused = false
+    return .handled
   }
 }
 

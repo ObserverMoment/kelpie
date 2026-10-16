@@ -6,6 +6,8 @@ import SwiftUI
 struct SidebarView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  /// Fleet, Pods or Threads covers the split view, so ⌘F is theirs.
+  let isOverlayPresented: Bool
   @Shared(.settingsFile) private var settingsFile
   @State private var isCreatingGroup = false
   @State private var newGroupName = ""
@@ -21,7 +23,8 @@ struct SidebarView: View {
 
     return SidebarListView(
       store: store,
-      terminalManager: terminalManager
+      terminalManager: terminalManager,
+      isOverlayPresented: isOverlayPresented
     )
     .toolbar {
       ToolbarItem(placement: .primaryAction) {

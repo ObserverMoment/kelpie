@@ -34,6 +34,13 @@ struct FleetViewStructure: Equatable, Sendable {
 
     var agent: SkillAgent { id.agent }
     var surfaceID: UUID { id.surfaceID }
+
+    /// The ⌘F filter: repository, worktree, branch, stored tab title, pod,
+    /// agent name or model contains the query.
+    func matches(_ query: String) -> Bool {
+      SearchMatch.matches(
+        query, any: [repositoryName, worktreeName, branchName, tab.title, podName, agent.displayName, model])
+    }
   }
 
   enum SectionID: Hashable, Sendable {
@@ -70,6 +77,17 @@ struct FleetViewStructure: Equatable, Sendable {
 
   func card(id: FleetCardID) -> Card? {
     allCards.first { $0.id == id }
+  }
+
+  /// The cards the ⌘F filter keeps, with emptied sections dropped; the
+  /// launcher rows are untouched. `nil` keeps everything.
+  func filtered(query: String?) -> FleetViewStructure {
+    guard let query else { return self }
+    let kept = sections.compactMap { section -> Section? in
+      let cards = section.cards.filter { $0.matches(query) }
+      return cards.isEmpty ? nil : Section(id: section.id, title: section.title, cards: cards)
+    }
+    return FleetViewStructure(sections: kept, launcherRows: launcherRows)
   }
 
   /// Sections follow the sidebar: every user group in order (titled with the

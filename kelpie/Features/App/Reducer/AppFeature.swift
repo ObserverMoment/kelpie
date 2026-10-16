@@ -264,11 +264,6 @@ struct AppFeature {
       focusedSurfaceID.map(threads.file.hasMail(for:)) ?? false
     }
 
-    /// The focused pane's thread unread count; `nil` when it has no thread.
-    var focusedSurfaceThreadUnreadCount: Int? {
-      focusedSurfaceID.flatMap { threads.file.boxes[id: $0]?.unreadCount }
-    }
-
     /// A Threads message is open full-window, with its reply box.
     var isShowingMailViewer: Bool {
       fleetView.isPresented && fleetView.mode == .threads && threads.openMessage != nil
@@ -284,6 +279,19 @@ struct AppFeature {
       return viewerReplying || panelReplying
     }
 
+    /// A ⌘F filter field in the shown overlay mode has the keys, so the Fleet
+    /// key monitor stands aside. Mode-gated like `mailViewerTakesKeys`, so a
+    /// stale focus flag from another mode's field cannot switch the monitor off.
+    var searchFieldTakesKeys: Bool {
+      guard fleetView.isPresented else { return false }
+      switch fleetView.mode {
+      case .fleet: return fleetView.search.isFocused
+      case .pods: return pods.search.isFocused
+      case .threads: return threads.tileSearch.isFocused || threads.messageSearch.isFocused
+      case .podWorkspace: return false
+      }
+    }
+
     /// What the Read Aloud hotkey reads: while Threads shows, the open
     /// message, else the focused one, else the shown thread's newest agent
     /// message; otherwise the focused pane's newest agent message.
@@ -291,7 +299,7 @@ struct AppFeature {
       guard fleetView.isPresented, fleetView.mode == .threads else {
         return focusedSurfaceID.flatMap(threads.file.newestMessageID(for:))
       }
-      let newestAgentMessageID = threads.timeline.last { $0.message.author == .agent }?.id
+      let newestAgentMessageID = threads.visibleTimeline.last { $0.message.author == .agent }?.id
       return threads.openMessage?.id ?? threads.focusedMessageID ?? newestAgentMessageID
     }
   }
@@ -352,6 +360,8 @@ struct AppFeature {
     /// Escape while the overlay is up: a message opened from the inbox steps
     /// back to the inbox; anything else closes the overlay.
     case overlayEscapePressed
+    /// Tab in Fleet View: Threads hands the keys to the shown thread's reply box.
+    case overlayTabPressed
     /// The sidebar column was shown or hidden; `ContentView` owns the visibility.
     case sidebarVisibilityChanged(Bool)
     case openActionSelectionChanged(OpenWorktreeAction)
@@ -1397,8 +1407,29 @@ struct AppFeature {
         }
 
       case .startSearch:
+        // ⌘F goes to the shown page's filter field; only the home view with a
+        // worktree open (and the sidebar not focused, which publishes its own
+        // action) reaches the terminal's find bar.
+        if state.fleetView.isPresented {
+          switch state.fleetView.mode {
+          case .fleet:
+            return .send(.fleetView(.search(.requested)))
+          case .pods:
+            return .send(.pods(.search(.requested)))
+          case .threads:
+            guard state.threads.openMessageID == nil else { return .none }
+            // Only while a thread is shown: with none, the message field is not
+            // mounted to take the keys, so the request goes to the tiles.
+            let isThreadShown = state.threads.displayedThreadID != nil
+            let searchesMessages =
+              isThreadShown && (state.threads.messageSearch.isPresented || state.threads.focusedMessageID != nil)
+            return .send(.threads(searchesMessages ? .messageSearch(.requested) : .tileSearch(.requested)))
+          case .podWorkspace:
+            return .none
+          }
+        }
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID) else {
-          return .none
+          return .send(.repositories(.search(.requested)))
         }
         return .run { _ in
           await terminalClient.send(.startSearch(worktree))
@@ -1833,9 +1864,10 @@ struct AppFeature {
         )
 
       case .fleetView(.delegate(.dismissed)):
-        // Threads always hears it, so a reply box that held the keys lets go;
-        // a message opened from a pane closes back to that pane.
-        let dismissal: Effect<Action> = .send(.threads(.overlayDismissed))
+        // Pods and Threads always hear it, so their filters clear and a reply
+        // box that held the keys lets go; a message opened from a pane closes
+        // back to that pane.
+        let dismissal: Effect<Action> = .merge(.send(.pods(.overlayDismissed)), .send(.threads(.overlayDismissed)))
         if state.threads.viewerReturnsToPane {
           return dismissal
         }
@@ -1875,6 +1907,10 @@ struct AppFeature {
           return .send(.threads(.viewerClosed))
         }
         return .send(.fleetView(.dismiss))
+
+      case .overlayTabPressed:
+        guard state.fleetView.mode == .threads else { return .none }
+        return .send(.threads(.panelReplyFocusRequested))
 
       case .fleetView:
         return .none

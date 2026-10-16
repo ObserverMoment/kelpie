@@ -16,6 +16,13 @@ struct PodStructure: Equatable, Sendable {
     /// Nil when the session has no live Claude presence.
     let activity: AgentPresenceFeature.Activity?
     let worktreeName: String?
+
+    /// The ⌘F filter: member name, description, registered session name or
+    /// worktree contains the query.
+    func matches(_ query: String) -> Bool {
+      let sessionName: String? = if case .registered(let name) = registration { name } else { nil }
+      return SearchMatch.matches(query, any: [name, description, sessionName, worktreeName])
+    }
   }
 
   struct PodCard: Identifiable, Equatable, Sendable {
@@ -46,6 +53,19 @@ struct PodStructure: Equatable, Sendable {
   var candidates: [Candidate]
 
   static let empty = PodStructure(pods: [], candidates: [])
+
+  /// The pods the ⌘F filter keeps: a pod whose name or description matches
+  /// keeps every member, otherwise only its matching members; emptied pods
+  /// drop out. Candidates are untouched. `nil` keeps everything.
+  func filtered(query: String?) -> PodStructure {
+    guard let query else { return self }
+    let kept = pods.compactMap { pod -> PodCard? in
+      if SearchMatch.matches(query, any: [pod.name, pod.description]) { return pod }
+      let members = pod.members.filter { $0.matches(query) }
+      return members.isEmpty ? nil : PodCard(id: pod.id, name: pod.name, description: pod.description, members: members)
+    }
+    return PodStructure(pods: kept, candidates: candidates)
+  }
 
   static let notClaudeReason = "Pods work with Claude Code sessions only."
 

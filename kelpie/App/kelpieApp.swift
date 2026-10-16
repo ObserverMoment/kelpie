@@ -400,6 +400,9 @@ struct KelpieApp: App {
       },
       readLastMessageAloud: { [weak terminalManager] contentID in
         terminalManager?.appStore?.send(.readLastAgentMessageAloud(surfaceID: contentID.rawValue))
+      },
+      showThread: { [weak terminalManager] contentID in
+        terminalManager?.appStore?.send(.showThread(surfaceID: contentID.rawValue))
       }
     ).factory()
   }

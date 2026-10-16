@@ -400,6 +400,9 @@ struct WorktreeDetailView: View {
       .focusedAction(\.showLastAgentMessageAction, enabled: actsOnLayout && focusedSurfaceHasMail) {
         store.send(.showLastAgentMessage(surfaceID: nil))
       }
+      .focusedAction(\.showThreadAction, enabled: actsOnLayout && focusedSurfaceHasMail) {
+        store.send(.showThread(surfaceID: nil))
+      }
       // Stopping works anywhere in the main window, the pod workspace included.
       // Scene-wide so it survives focus moving into the mail viewer's reply
       // box, outside this view.
@@ -422,7 +425,9 @@ struct WorktreeDetailView: View {
         guard !isPodWorkspace else { return }
         store.send(.closeSurface)
       }
-      .focusedSceneAction(\.startSearchAction, enabled: actsOnLayout) {
+      // Not gated on a worktree: the reducer routes ⌘F to the shown page's
+      // filter field, and only reaches the terminal when one is open.
+      .focusedSceneAction(\.startSearchAction, enabled: !isPodWorkspace) {
         store.send(.startSearch)
       }
       .focusedSceneAction(\.searchSelectionAction, enabled: actsOnLayout) {
@@ -679,9 +684,7 @@ struct WorktreeDetailView: View {
             terminalManager: terminalManager,
             inspectorPane: inspectorPane,
             inspectorPresented: inspectorPresented,
-            threadUnreadCount: store.focusedSurfaceThreadUnreadCount,
-            onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) },
-            onShowThread: { store.send(.showThread(surfaceID: nil)) }
+            onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) }
           )
         }
       } else if hasActiveWorktree, let selectedWorktree {
@@ -713,9 +716,7 @@ struct WorktreeDetailView: View {
           repositoriesStore: repositoriesStore,
           inspectorPane: inspectorPane,
           inspectorPresented: inspectorPresented,
-          threadUnreadCount: store.focusedSurfaceThreadUnreadCount,
           onActivateInspector: { repositoriesStore.send(.toggleInspectorPane($0)) },
-          onShowThread: { store.send(.showThread(surfaceID: nil)) },
           onOpenWorktree: { store.send(.openWorktree($0)) },
           onOpenActionSelectionChanged: { store.send(.openActionSelectionChanged($0)) },
           onRevealInFinder: { store.send(.revealInFinder) },
@@ -740,9 +741,7 @@ struct WorktreeDetailView: View {
     let repositoriesStore: StoreOf<RepositoriesFeature>?
     let inspectorPane: WorktreeInspectorPane
     let inspectorPresented: Bool
-    let threadUnreadCount: Int?
     let onActivateInspector: (WorktreeInspectorPane) -> Void
-    let onShowThread: () -> Void
     let onOpenWorktree: (OpenWorktreeAction) -> Void
     let onOpenActionSelectionChanged: (OpenWorktreeAction) -> Void
     let onRevealInFinder: () -> Void
@@ -800,9 +799,7 @@ struct WorktreeDetailView: View {
         terminalManager: terminalManager,
         inspectorPane: inspectorPane,
         inspectorPresented: inspectorPresented,
-        threadUnreadCount: threadUnreadCount,
-        onActivateInspector: onActivateInspector,
-        onShowThread: onShowThread
+        onActivateInspector: onActivateInspector
       )
     }
 
@@ -886,9 +883,7 @@ struct WorktreeDetailView: View {
     let terminalManager: WorktreeTerminalManager
     let inspectorPane: WorktreeInspectorPane
     let inspectorPresented: Bool
-    let threadUnreadCount: Int?
     let onActivateInspector: (WorktreeInspectorPane) -> Void
-    let onShowThread: () -> Void
 
     var body: some ToolbarContent {
       ToolbarItemGroup {
@@ -915,10 +910,6 @@ struct WorktreeDetailView: View {
           tint: chromeTint,
           foreground: chromeForeground,
           onActivate: { onActivateInspector(.notifications) }
-        )
-        WorktreeThreadsToolbarButton(
-          unreadCount: threadUnreadCount,
-          onActivate: onShowThread
         )
       }
     }
@@ -1537,9 +1528,7 @@ private struct WorktreeToolbarPreview: View {
         repositoriesStore: nil,
         inspectorPane: .git,
         inspectorPresented: false,
-        threadUnreadCount: nil,
         onActivateInspector: { _ in },
-        onShowThread: {},
         onOpenWorktree: { _ in },
         onOpenActionSelectionChanged: { _ in },
         onRevealInFinder: {},

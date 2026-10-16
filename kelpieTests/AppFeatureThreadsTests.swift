@@ -755,7 +755,6 @@ extension AppFeatureThreadsTests {
     #expect(store.state.fleetView.isPresented)
     #expect(store.state.fleetView.mode == .threads)
     #expect(store.state.threads.selectedThreadID == .session(surfaceID))
-    #expect(store.state.focusedSurfaceThreadUnreadCount == 1)
   }
 
   @Test(.dependencies) func aPoddedDeliveryRollsThePodSummaryUntilThePodIsRemoved() async {
@@ -795,6 +794,31 @@ extension AppFeatureThreadsTests {
     await store.receive(\.threads.jumpToFocused)
     await store.receive(\.threads.delegate.jumpToSession)
     #expect(!store.state.fleetView.isPresented)
+  }
+
+  @Test(.dependencies) func tabHandsTheKeysToThePanelReplyBox() async {
+    let worktree = Self.makeWorktree("/tmp/threads-app/wt")
+    let surfaceID = UUID()
+    let store = Self.makeStore(worktree: worktree, liveAgentSurfaceIDs: [surfaceID])
+    await Self.deliver(store, worktree: worktree, surfaceID: surfaceID, "hi")
+
+    // Only Threads has a reply box.
+    await store.send(.fleetView(.toggle))
+    await store.send(.overlayTabPressed)
+    #expect(!store.state.threads.isPanelReplyFocused)
+
+    await store.send(.fleetView(.toggleThreads))
+    await store.send(.overlayTabPressed)
+    await store.receive(\.threads.panelReplyFocusRequested)
+    #expect(store.state.mailViewerTakesKeys)
+
+    // The viewer's own box is in front of the panel's.
+    await store.send(.threads(.panelReplyFocusChanged(false)))
+    let id = store.state.threads.file.boxes[id: surfaceID]!.messages[0].id
+    await store.send(.threads(.messageOpened(id)))
+    await store.send(.overlayTabPressed)
+    await store.receive(\.threads.panelReplyFocusRequested)
+    #expect(!store.state.threads.isPanelReplyFocused)
   }
 
   @Test(.dependencies) func thePanelReplyBoxTakesTheKeysFromTheOverlayMonitor() async {

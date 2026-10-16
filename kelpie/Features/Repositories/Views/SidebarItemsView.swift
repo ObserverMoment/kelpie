@@ -91,8 +91,10 @@ private struct SidebarItemGroupView: View {
         SidebarBranchNesting.buildRows(
           itemIDs: rowIDs,
           branchNames: branchNames(for: rowIDs),
-          collapsedPrefixes: store.state.sidebar.sections[repository.id]?.buckets[bucketID]?
-            .collapsedBranchPrefixes ?? []
+          // Every prefix opens while the ⌘F filter is active, so a matching
+          // row inside a collapsed one is seen.
+          collapsedPrefixes: store.state.isSidebarFiltering
+            ? [] : store.state.sidebar.sections[repository.id]?.buckets[bucketID]?.collapsedBranchPrefixes ?? []
         )
       } else {
         rowIDs.map { .leaf(id: $0, depth: 0, displayName: nil) }

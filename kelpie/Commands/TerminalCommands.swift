@@ -13,6 +13,7 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.equalizeSplitsAction) private var equalizeSplitsAction
   @FocusedValue(\.showLastAgentMessageAction) private var showLastAgentMessageAction
   @FocusedValue(\.readLastAgentMessageAloudAction) private var readLastAgentMessageAloudAction
+  @FocusedValue(\.showThreadAction) private var showThreadAction
   @FocusedValue(\.focusSplitAction) private var focusSplitAction
   @FocusedValue(\.startSearchAction) private var startSearchAction
   @FocusedValue(\.searchSelectionAction) private var searchSelectionAction
@@ -81,6 +82,12 @@ struct TerminalCommands: Commands {
       }
       .appKeyboardShortcut(AppShortcuts.readLastAgentMessageAloud.effective(from: overrides))
       .disabled(readLastAgentMessageAloudAction?.isEnabled != true)
+
+      Button("Show Thread", systemImage: ThreadsView.symbolName) {
+        showThreadAction?()
+      }
+      .appKeyboardShortcut(AppShortcuts.showThread.effective(from: overrides))
+      .disabled(showThreadAction?.isEnabled != true)
 
       Divider()
 
@@ -213,6 +220,10 @@ private struct ReadLastAgentMessageAloudActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
 
+private struct ShowThreadActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
 private struct EqualizeSplitsActionKey: FocusedValueKey {
   typealias Value = FocusedAction<Void>
 }
@@ -244,6 +255,11 @@ extension FocusedValues {
   var readLastAgentMessageAloudAction: FocusedAction<Void>? {
     get { self[ReadLastAgentMessageAloudActionKey.self] }
     set { self[ReadLastAgentMessageAloudActionKey.self] = newValue }
+  }
+
+  var showThreadAction: FocusedAction<Void>? {
+    get { self[ShowThreadActionKey.self] }
+    set { self[ShowThreadActionKey.self] = newValue }
   }
 
   var equalizeSplitsAction: FocusedAction<Void>? {

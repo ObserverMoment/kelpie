@@ -82,7 +82,7 @@ struct FleetViewKeyMonitor: NSViewRepresentable {
             // A held space must not fire jump after jump.
             guard !event.isARepeat else { break }
             self.onDecision(decision)
-          case .move, .activate, .dismiss:
+          case .move, .activate, .dismiss, .focusReply:
             self.onDecision(decision)
           }
           return true

@@ -62,15 +62,19 @@ extension View {
   }
 
   /// `focusedValue` variant. Same contract as `focusedSceneAction`.
+  /// `published: false` withdraws the value (publishes nil) so a scene-level
+  /// publisher of the same key takes over; `enabled: false` instead keeps the
+  /// menu item and disables it.
   func focusedAction<Input>(
     _ keyPath: WritableKeyPath<FocusedValues, FocusedAction<Input>?>,
     enabled: Bool,
     token: AnyHashable? = nil,
+    published: Bool = true,
     perform: @escaping (Input) -> Void
   ) -> some View {
     focusedValue(
       keyPath,
-      FocusedAction(isEnabled: enabled, token: token, perform: perform)
+      published ? FocusedAction(isEnabled: enabled, token: token, perform: perform) : nil
     )
   }
 }

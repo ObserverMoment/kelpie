@@ -18,6 +18,15 @@ struct ThreadsFeature {
     @Shared(.threads) var file: ThreadsFile
     @Shared(.settingsFile) var settingsFile
     var structure: ThreadsStructure = .empty
+    /// The ⌘F filter over the tile list.
+    var tileSearch = SearchFilterFeature.State()
+    /// The ⌘F filter over the shown thread's messages.
+    var messageSearch = SearchFilterFeature.State()
+    /// `structure` pruned to the tile query; only read while one is active.
+    var filteredStructure: ThreadsStructure = .empty
+    /// What the tile list draws and the arrows walk: the filtered tiles while
+    /// a query is active, else every tile.
+    var visibleStructure: ThreadsStructure { tileSearch.activeQuery == nil ? structure : filteredStructure }
     /// The selected tile: a pod, a session in no pod, or one member of a pod.
     var selectedThreadID: ThreadID?
     /// The message shown full-window, if any.
@@ -101,7 +110,14 @@ struct ThreadsFeature {
       .sorted { $0.message.createdAt < $1.message.createdAt }
     }
 
-    var selectedMessageIDs: [MailMessage.ID] { timeline.map(\.id) }
+    /// The timeline the panel shows: only the messages whose body contains
+    /// the message query while one is active.
+    var visibleTimeline: [TimelineEntry] {
+      guard let query = messageSearch.activeQuery else { return timeline }
+      return timeline.filter { SearchMatch.matches(query, $0.message.body) }
+    }
+
+    var selectedMessageIDs: [MailMessage.ID] { visibleTimeline.map(\.id) }
 
     /// The reply box under the timeline can send: at least one shown session
     /// has a live agent.
@@ -154,6 +170,7 @@ struct ThreadsFeature {
     mutating func applyStructure(_ next: ThreadsStructure) {
       guard next != structure else { return }
       structure = next
+      refilterStructure()
       hiddenMembers = Dictionary(
         uniqueKeysWithValues: hiddenMembers.compactMap { podID, hidden in
           let remaining = hidden.intersection(next.memberIDs(of: podID))
@@ -162,6 +179,20 @@ struct ThreadsFeature {
       let tiles = next.navigationOrder(expandedPods: Set(next.pods.map(\.id)))
       if let selected = selectedThreadID, tiles.contains(selected) { return }
       selectedThreadID = next.tiles.first?.id
+      openMessageID = nil
+      focusedMessageID = nil
+    }
+
+    /// Re-derives the filtered tiles from the full structure and the live
+    /// query. A selection the filter hid moves to the first visible tile, as
+    /// Fleet and Pods move their focus; with nothing visible it stays, so the
+    /// panel keeps showing the thread.
+    mutating func refilterStructure() {
+      guard let query = tileSearch.activeQuery else { return }
+      filteredStructure = structure.filtered(query: query)
+      let visible = filteredStructure.navigationOrder(expandedPods: Set(filteredStructure.pods.map(\.id)))
+      guard let first = visible.first, let selected = selectedThreadID, !visible.contains(selected) else { return }
+      selectedThreadID = first
       openMessageID = nil
       focusedMessageID = nil
     }
@@ -202,12 +233,14 @@ struct ThreadsFeature {
       surfaceID: UUID, worktreeID: Worktree.ID, agent: SkillAgent, body: String, podID: PodID? = nil,
       memberName: String? = nil)
     case tileSelected(ThreadID?)
-    /// A pane asked for its thread: its own tile, or its member tile inside
-    /// its pod, which shows the pod thread narrowed to that member.
+    /// A pane asked for its thread: its own tile, or its pod's tile with every
+    /// member showing.
     case threadSelected(forSurface: UUID)
     case podExpansionToggled(PodID)
     /// The reply box under the timeline took or gave up the keys.
     case panelReplyFocusChanged(Bool)
+    /// Tab: the reply box under the timeline takes the keys, when it can send.
+    case panelReplyFocusRequested
     /// A chip: hides or shows one member's messages in the pod thread. From a
     /// member tile it moves to the pod tile with both members showing.
     case memberToggled(podID: PodID, surfaceID: UUID)
@@ -242,6 +275,8 @@ struct ThreadsFeature {
     /// The overlay closed: the reply box lets go of the keys, and a viewer
     /// opened from a pane closes with it, so the thread shows next time.
     case overlayDismissed
+    case tileSearch(SearchFilterFeature.Action)
+    case messageSearch(SearchFilterFeature.Action)
     /// The tick: the message leaves the thread.
     case markDone(MailMessage.ID)
     /// The tile's context menu: every message in the thread is done. For a
@@ -284,8 +319,28 @@ struct ThreadsFeature {
   @Dependency(ThreadSummaryClient.self) private var summaryClient
 
   var body: some Reducer<State, Action> {
+    Scope(state: \.tileSearch, action: \.tileSearch) {
+      SearchFilterFeature()
+    }
+    Scope(state: \.messageSearch, action: \.messageSearch) {
+      SearchFilterFeature()
+    }
     Reduce { state, action in
       switch action {
+      case .tileSearch(.queryChanged), .tileSearch(.dismissed):
+        state.refilterStructure()
+        return .none
+
+      case .messageSearch(.queryChanged), .messageSearch(.dismissed):
+        // A focused message the filter hid gives the keys back to the tiles.
+        if let focused = state.focusedMessageID, !state.selectedMessageIDs.contains(focused) {
+          state.focusedMessageID = nil
+        }
+        return .none
+
+      case .tileSearch, .messageSearch:
+        return .none
+
       case .received(let surfaceID, let worktreeID, let agent, let body, let podID, let memberName):
         let message = MailMessage(id: uuid(), body: body, createdAt: now)
         state.$file.withLock { file in
@@ -306,12 +361,13 @@ struct ThreadsFeature {
         return .none
 
       case .threadSelected(forSurface: let surfaceID):
-        guard state.structure.rowsBySurface[surfaceID] != nil else { return .none }
-        state.selectedThreadID = .session(surfaceID)
+        guard let threadID = state.structure.threadID(containingSurface: surfaceID) else { return .none }
+        state.selectedThreadID = threadID
         state.openMessageID = nil
         state.focusedMessageID = nil
-        if case .pod(let podID)? = state.structure.threadID(containingSurface: surfaceID) {
+        if case .pod(let podID) = threadID {
           state.collapsedPods.remove(podID)
+          state.hiddenMembers[podID] = nil
         }
         return .none
 
@@ -321,6 +377,11 @@ struct ThreadsFeature {
 
       case .panelReplyFocusChanged(let isFocused):
         state.isPanelReplyFocused = isFocused
+        return .none
+
+      case .panelReplyFocusRequested:
+        guard state.openMessageID == nil, state.canReplyToDisplayed else { return .none }
+        state.isPanelReplyFocused = true
         return .none
 
       case .memberToggled(let podID, let surfaceID):
@@ -352,7 +413,7 @@ struct ThreadsFeature {
             state.focusedMessageID = FleetViewNavigation.move(
               from: focused, direction, sections: [messageIDs], columnCount: 1)
           } else {
-            let tiles = state.structure.navigationOrder(expandedPods: state.expandedPods)
+            let tiles = state.visibleStructure.navigationOrder(expandedPods: state.expandedPods)
             state.selectedThreadID = FleetViewNavigation.move(
               from: state.selectedThreadID, direction, sections: [tiles], columnCount: 1)
           }
@@ -438,6 +499,9 @@ struct ThreadsFeature {
 
       case .overlayDismissed:
         state.isPanelReplyFocused = false
+        // Reopening starts unfiltered.
+        state.tileSearch = SearchFilterFeature.State()
+        state.messageSearch = SearchFilterFeature.State()
         guard state.viewerReturnsToPane else { return .none }
         return Self.closeViewer(state: &state)
 

@@ -14,6 +14,7 @@ struct FleetView: View {
   let runtime: ContentRuntime
 
   private nonisolated static let horizontalPadding: CGFloat = 32
+  private nonisolated static let searchFieldMaxWidth: CGFloat = 320
 
   /// The one glyph used by the header, the toolbar button and the Sidebar menu item.
   static let symbolName = "square.grid.2x2"
@@ -61,6 +62,9 @@ struct FleetView: View {
           description: Text("Launch an agent from the menu above, or start one in a terminal.")
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if store.visibleStructure.isEmpty, let query = store.search.activeQuery {
+        ContentUnavailableView.search(text: query)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         sessions
       }
@@ -94,6 +98,17 @@ struct FleetView: View {
           FleetLauncherView(store: store)
         }
         Spacer(minLength: 0)
+        if store.mode == .pods, podsStore.search.isPresented {
+          SearchFilterField(
+            store: podsStore.scope(state: \.search, action: \.search), subject: "pods and sessions", surface: "pods"
+          )
+          .frame(maxWidth: Self.searchFieldMaxWidth)
+        } else if store.mode == .fleet, store.search.isPresented {
+          SearchFilterField(
+            store: store.scope(state: \.search, action: \.search), subject: "sessions", surface: "fleet"
+          )
+          .frame(maxWidth: Self.searchFieldMaxWidth)
+        }
       }
     }
     .padding(.horizontal, Self.horizontalPadding)
@@ -127,7 +142,7 @@ struct FleetView: View {
     ScrollViewReader { proxy in
       ScrollView {
         VStack(alignment: .leading, spacing: 28) {
-          ForEach(store.structure.sections) { section in
+          ForEach(store.visibleStructure.sections) { section in
             FleetSectionView(
               section: section,
               columnCount: store.columnCount,

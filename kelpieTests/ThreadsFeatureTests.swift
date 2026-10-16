@@ -316,7 +316,7 @@ struct ThreadsFeatureTests {
     let row = { (id: UUID) in
       ThreadsStructure.Row(
         id: id, worktreeID: Self.worktreeID, tab: nil, worktreeName: "wt", repositoryName: "repo",
-        agent: .claude, unreadCount: 0, messageCount: 1, isStale: false, summary: nil, memberName: nil)
+        agent: .claude, unreadCount: 0, messageCount: 1, isStale: false, summary: nil, memberName: nil, branchName: nil)
     }
     state.applyStructure(ThreadsStructure(tiles: [.session(row(first)), .session(row(second))]))
     #expect(state.selectedThreadID == .session(first))
@@ -339,14 +339,20 @@ struct TerminalTabChromeMailTests {
 
     let opened = LockIsolated(0)
     let readAloud = LockIsolated(0)
+    let shownThread = LockIsolated(0)
     chrome.showLastMessage = { opened.withValue { $0 += 1 } }
     chrome.readLastMessageAloud = { readAloud.withValue { $0 += 1 } }
+    chrome.showThread = { shownThread.withValue { $0 += 1 } }
     let actions = chrome.stripActions
     #expect(
-      actions.map(\.shortcut.id) == [AppShortcuts.showLastAgentMessage.id, AppShortcuts.readLastAgentMessageAloud.id])
+      actions.map(\.shortcut.id) == [
+        AppShortcuts.showLastAgentMessage.id, AppShortcuts.readLastAgentMessageAloud.id,
+        AppShortcuts.showThread.id,
+      ])
     actions.forEach { $0.perform() }
     #expect(opened.value == 1)
     #expect(readAloud.value == 1)
+    #expect(shownThread.value == 1)
 
     chrome.hasMail = false
     #expect(chrome.stripActions.isEmpty)
@@ -477,7 +483,8 @@ extension ThreadsFeatureTests {
         .session(
           ThreadsStructure.Row(
             id: survivor, worktreeID: Self.worktreeID, tab: nil, worktreeName: "", repositoryName: "",
-            agent: .claude, unreadCount: 0, messageCount: 0, isStale: false, summary: nil, memberName: nil))
+            agent: .claude, unreadCount: 0, messageCount: 0, isStale: false, summary: nil, memberName: nil,
+            branchName: nil))
       ]))
     #expect(state.selectedThreadID == .session(survivor))
     #expect(state.focusedMessageID == nil)

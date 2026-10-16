@@ -28,6 +28,15 @@ struct FleetViewFeature {
       return true
     }
     var structure: FleetViewStructure = .empty
+    /// The ⌘F filter over the cards.
+    var search = SearchFilterFeature.State()
+    /// `structure` pruned to `filteredQuery`; only read while a query is active.
+    var filteredStructure: FleetViewStructure = .empty
+    /// The query `filteredStructure` was built for; `nil` once dismissed.
+    var filteredQuery: String?
+    /// What the grid draws and the arrows walk: the filtered cards while a
+    /// query is active, else every card.
+    var visibleStructure: FleetViewStructure { search.activeQuery == nil ? structure : filteredStructure }
     var focusedCardID: FleetCardID?
     var columnCount = 1
     var launcherWorktreeID: Worktree.ID?
@@ -60,12 +69,33 @@ struct FleetViewFeature {
     /// post-reduce step, so no action fires per presence tick.
     mutating func applyStructure(_ next: FleetViewStructure) {
       guard next != structure else { return }
-      let previous = structure.allCards.map(\.id)
+      let previous = shownCardIDs
       structure = next
+      refilterStructure(previous: previous)
+    }
+
+    /// Re-derives the filtered cards from the full structure and the live
+    /// query, keeping the focus on a visible card (or its nearest neighbour).
+    mutating func refilterStructure() {
+      refilterStructure(previous: shownCardIDs)
+    }
+
+    /// The cards drawn before this refilter: the search's child reducer has
+    /// already written the new query, so `visibleStructure` would read a
+    /// copy built for the previous one (or none).
+    private var shownCardIDs: [FleetCardID] {
+      (filteredQuery == nil ? structure : filteredStructure).allCards.map(\.id)
+    }
+
+    private mutating func refilterStructure(previous: [FleetCardID]) {
+      if let query = search.activeQuery {
+        filteredStructure = structure.filtered(query: query)
+      }
+      filteredQuery = search.activeQuery
+      let current = visibleStructure.allCards.map(\.id)
       focusedCardID =
-        FleetViewNavigation.reconcile(
-          focused: focusedCardID ?? previous.first, previous: previous, current: next.allCards.map(\.id))
-        ?? next.allCards.first?.id
+        FleetViewNavigation.reconcile(focused: focusedCardID ?? previous.first, previous: previous, current: current)
+        ?? current.first
     }
   }
 
@@ -90,6 +120,7 @@ struct FleetViewFeature {
     case launcherAgentChanged(SkillAgent)
     case launcherAccountChanged(String?)
     case launchTapped
+    case search(SearchFilterFeature.Action)
     case delegate(Delegate)
   }
 
@@ -102,8 +133,18 @@ struct FleetViewFeature {
   }
 
   var body: some Reducer<State, Action> {
+    Scope(state: \.search, action: \.search) {
+      SearchFilterFeature()
+    }
     Reduce { state, action in
       switch action {
+      case .search(.queryChanged), .search(.dismissed):
+        state.refilterStructure()
+        return .none
+
+      case .search:
+        return .none
+
       case .toggle:
         return Self.toggle(.fleet, state: &state)
 
@@ -120,6 +161,10 @@ struct FleetViewFeature {
       case .dismiss:
         guard state.isPresented else { return .none }
         state.isPresented = false
+        // Reopening starts unfiltered; the refilter also drops the recorded
+        // query so the next reconcile reads the full grid as what was shown.
+        state.search = SearchFilterFeature.State()
+        state.refilterStructure()
         // Reopening lands on the pod list, not a workspace left open.
         if case .podWorkspace = state.mode {
           state.mode = .pods
@@ -134,7 +179,7 @@ struct FleetViewFeature {
         guard state.isPresented, state.mode == .fleet else { return .none }
         state.focusedCardID = FleetViewNavigation.move(
           from: state.focusedCardID, direction,
-          sections: state.structure.sectionCardIDs, columnCount: state.columnCount)
+          sections: state.visibleStructure.sectionCardIDs, columnCount: state.columnCount)
         return .none
 
       case .activateFocusedCard:

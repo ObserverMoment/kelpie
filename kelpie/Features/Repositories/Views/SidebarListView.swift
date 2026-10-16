@@ -8,6 +8,8 @@ import SwiftUI
 struct SidebarListView: View {
   @Bindable var store: StoreOf<RepositoriesFeature>
   let terminalManager: WorktreeTerminalManager
+  /// Fleet, Pods or Threads covers the split view, so ⌘F is theirs.
+  let isOverlayPresented: Bool
   @FocusState private var isSidebarFocused: Bool
   @Environment(CommandKeyObserver.self) private var commandKeyObserver
   @Shared(.settingsFile) private var settingsFile
@@ -21,7 +23,8 @@ struct SidebarListView: View {
 
   var body: some View {
     let state = store.state
-    let structure = state.sidebarStructure
+    let structure = state.visibleSidebarStructure
+    let isFiltering = state.search.activeQuery != nil
     let currentSelections = state.visibleSidebarSelections
     let selection = Binding<Set<SidebarSelection>>(
       get: { currentSelections },
@@ -84,7 +87,8 @@ struct SidebarListView: View {
           )
         }
         .onMove(
-          perform: sectionSort.allowsReordering
+          // A filtered run's offsets would not map onto the full order.
+          perform: sectionSort.allowsReordering && !isFiltering
             ? { offsets, destination in
               guard let move = structure.ungroupedMove(offsets: offsets, destination: destination) else { return }
               store.send(.repositoriesMoved(move.offsets, move.destination))
@@ -116,7 +120,7 @@ struct SidebarListView: View {
         return true
       }
       .onKeyPress { keyPress in
-        guard !keyPress.characters.isEmpty else { return .ignored }
+        guard !keyPress.characters.isEmpty, !state.search.isFocused else { return .ignored }
         let navigationKeys: Set<KeyEquivalent> = [
           .upArrow, .downArrow, .leftArrow, .rightArrow,
           .home, .end, .pageUp, .pageDown,
@@ -157,6 +161,29 @@ struct SidebarListView: View {
       .onChange(of: state.keyboardFocusedGroupID) { _, groupID in
         guard let groupID else { return }
         scrollProxy.scrollTo(groupID)
+      }
+      // After `.onKeyPress`, so the field is not a descendant of the handler
+      // that forwards typed characters to the terminal.
+      .safeAreaInset(edge: .top, spacing: 0) {
+        if state.search.isPresented {
+          SearchFilterField(
+            store: store.scope(state: \.search, action: \.search), subject: "repositories and branches",
+            surface: "sidebar"
+          )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+        }
+      }
+      // Closing the field hands the keys back to the list.
+      .onChange(of: state.search.isPresented) { _, isPresented in
+        if !isPresented { isSidebarFocused = true }
+      }
+      // While the sidebar (or its field) has focus, ⌘F filters it; the detail's
+      // scene-wide action (the terminal find bar) is the fallback. Withdrawn,
+      // not disabled, while the overlay is up: the list keeps focus under it,
+      // and nil lets ⌘F fall through to the shown page's filter.
+      .focusedAction(\.startSearchAction, enabled: true, published: !isOverlayPresented) {
+        store.send(.search(.requested))
       }
     }
   }
@@ -230,19 +257,16 @@ private struct SidebarSectionDispatcher: View {
       )
     case .folder(let repositoryID, let rowID):
       if let repository = store.state.repositories[id: repositoryID] {
-        // A zero-height header keeps `.listStyle(.sidebar)` from merging two
-        // consecutive folder repos visually; its top inset is the gap.
-        Section {
-          SidebarFolderRow(
-            repository: repository,
-            rowID: rowID,
-            shortcutHint: shortcutHintByID[rowID],
-            store: store,
-            terminalManager: terminalManager
-          )
-        } header: {
-          SidebarSectionGap()
-        }
+        // A plain row, not a `Section`: the sidebar list style gives every
+        // section a fixed header slot, so the gap is the row's own top padding.
+        SidebarFolderRow(
+          repository: repository,
+          rowID: rowID,
+          shortcutHint: shortcutHintByID[rowID],
+          store: store,
+          terminalManager: terminalManager
+        )
+        .padding(.top, SidebarNestLayout.sectionSpacing)
       }
     case .repositoryGroup(let groupID, let name, let isCollapsed, let members):
       SidebarRepositoryGroupSection(
@@ -453,8 +477,9 @@ private struct SidebarSectionActionsView: View {
 
 /// A user-defined group as one list section drawn as a card: a header row,
 /// then each member's own header row and worktree rows, then a padding row.
-/// Plain rows rather than nested `Section`s because the sidebar list style
-/// paints `listRowBackground` on rows only, never on section headers.
+/// Plain rows rather than a `Section` because the sidebar list style paints
+/// `listRowBackground` on rows only, never on section headers, and reserves a
+/// header slot per section that would widen the gap between cards.
 /// Membership changes through menus; members reorder among themselves by drag.
 private struct SidebarRepositoryGroupSection: View {
   let groupID: RepositoryGroupID
@@ -471,9 +496,9 @@ private struct SidebarRepositoryGroupSection: View {
   let terminalManager: WorktreeTerminalManager
 
   var body: some View {
-    // Zero-height header keeps `.listStyle(.sidebar)` from merging neighbouring
-    // cards; the header row below is an ordinary row so it takes the fill.
-    Section {
+    // Plain rows, not a `Section`: the sidebar list style gives every section
+    // a fixed header slot. The header row's card edge draws the gap above it.
+    Group {
       SidebarGroupHeaderRow(
         groupID: groupID,
         name: name,
@@ -483,7 +508,7 @@ private struct SidebarRepositoryGroupSection: View {
         groupCount: groupCount,
         store: store
       )
-      .listRowBackground(SidebarGroupCardFill(edge: isCollapsed ? .single : .top))
+      .groupCardRowBackground(isCollapsed ? .single : .top)
       .moveDisabled(true)
       .id(groupID)
       if !isCollapsed {
@@ -507,18 +532,7 @@ private struct SidebarRepositoryGroupSection: View {
               store.send(.repositoriesMoved(move.offsets, move.destination))
             } : nil)
       }
-    } header: {
-      SidebarSectionGap()
     }
-  }
-}
-
-/// Zero-height section header whose top inset is the gap between sections.
-private struct SidebarSectionGap: View {
-  var body: some View {
-    Color.clear
-      .frame(height: 0)
-      .listRowInsets(EdgeInsets(top: SidebarNestLayout.sectionSpacing, leading: 0, bottom: 0, trailing: 0))
   }
 }
 

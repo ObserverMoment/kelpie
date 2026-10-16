@@ -344,6 +344,61 @@ struct SidebarStructure: Equatable, Sendable {
 }
 
 extension SidebarStructure {
+  /// The structure pruned to what the ⌘F filter keeps. A repository, folder or
+  /// group whose own name matches keeps every row; otherwise only matching rows
+  /// stay, a group that matched through its members opens, and emptied sections
+  /// drop out. Hotkey slots and highlight payloads are kept verbatim, so ⌘1…9
+  /// and the hints still mean the full ordering.
+  func filtered(
+    rowMatches: (Worktree.ID) -> Bool,
+    repositoryMatches: (Repository.ID) -> Bool,
+    textMatches: (String) -> Bool
+  ) -> SidebarStructure {
+    func prune(_ section: Section) -> Section? {
+      switch section {
+      case .highlight(let kind, let rowIDs):
+        let kept = rowIDs.filter(rowMatches)
+        return kept.isEmpty ? nil : .highlight(kind: kind, rowIDs: kept)
+      case .repository(let repositoryID, let groups):
+        if repositoryMatches(repositoryID) { return section }
+        let kept = groups.compactMap { group -> SidebarItemGroup? in
+          let rowIDs = group.rowIDs.filter(rowMatches)
+          return rowIDs.isEmpty
+            ? nil : SidebarItemGroup(slot: group.slot, repositoryID: group.repositoryID, rowIDs: rowIDs)
+        }
+        return kept.isEmpty ? nil : .repository(repositoryID: repositoryID, groups: kept)
+      case .folder(let repositoryID, let rowID):
+        return repositoryMatches(repositoryID) || rowMatches(rowID) ? section : nil
+      case .failedRepository(let repositoryID, let rootURL, let customTitle, _, _),
+        .environmentBlockedRepository(let repositoryID, let rootURL, let customTitle, _):
+        let shownName = customTitle ?? rootURL.lastPathComponent
+        let isKept = repositoryMatches(repositoryID) || textMatches(shownName)
+        return isKept ? section : nil
+      case .repositoryGroup(let groupID, let name, _, let members):
+        if textMatches(name) { return section }
+        let kept = members.compactMap(prune)
+        return kept.isEmpty ? nil : .repositoryGroup(groupID: groupID, name: name, collapsed: false, members: kept)
+      case .placeholder:
+        return section
+      }
+    }
+    let leading = leadingSections.compactMap(prune)
+    let groupBlocks = groupBlockSections.compactMap(prune)
+    let ungrouped = ungroupedSections.compactMap(prune)
+    return SidebarStructure(
+      sections: leading + groupBlocks + ungrouped,
+      hoistedRowIDs: hoistedRowIDs,
+      hotkeySlots: hotkeySlots,
+      slotByID: slotByID,
+      repositoryHighlightByID: repositoryHighlightByID,
+      hoistSummaryByRepositoryID: hoistSummaryByRepositoryID,
+      reorderableRepositoryIDs: reorderableRepositoryIDs,
+      leadingSections: leading,
+      groupBlockSections: groupBlocks,
+      ungroupedSections: ungrouped
+    )
+  }
+
   /// One place ⌃⌘↑/↓ can land: a visible row, or a user group's header.
   enum NavigationStop: Hashable, Sendable {
     case group(RepositoryGroupID)
@@ -352,11 +407,17 @@ extension SidebarStructure {
 
   /// Top-down keyboard stops: the hotkey rows in their visible order, with each
   /// user group's header ahead of its rows. A collapsed group is its header alone.
-  var navigationStops: [NavigationStop] {
+  var navigationStops: [NavigationStop] { navigationStops(everyRowShown: false) }
+
+  /// `everyRowShown`: the ⌘F filter holds every repository and branch prefix
+  /// open, so a row without a hotkey slot (issued from the stored expansion
+  /// state) is drawn, and a stop, as well.
+  func navigationStops(everyRowShown: Bool) -> [NavigationStop] {
+    func isShown(_ rowID: Worktree.ID) -> Bool { everyRowShown || slotByID[rowID] != nil }
     func stops(in section: Section) -> [NavigationStop] {
       switch section {
       case .highlight(_, let rowIDs):
-        rowIDs.filter { slotByID[$0] != nil }.map(NavigationStop.worktree)
+        rowIDs.filter(isShown).map(NavigationStop.worktree)
       case .repositoryGroup(let groupID, _, let collapsed, let members):
         [.group(groupID)] + (collapsed ? [] : members.flatMap(stops))
       case .folder(_, let rowID):
@@ -370,7 +431,7 @@ extension SidebarStructure {
     // `slotByID` holds exactly the rows the sidebar shows; a hoisted row is a
     // stop in its highlight section, not under its repository.
     func unhoistedStops(_ rowIDs: [Worktree.ID]) -> [NavigationStop] {
-      rowIDs.filter { slotByID[$0] != nil && !hoistedRowIDs.contains($0) }.map(NavigationStop.worktree)
+      rowIDs.filter { isShown($0) && !hoistedRowIDs.contains($0) }.map(NavigationStop.worktree)
     }
     return sections.flatMap(stops)
   }
@@ -388,8 +449,44 @@ extension RepositoriesFeature.State {
       groupActive: groupActive,
       sectionSort: sectionSort
     )
-    if new != sidebarStructure {
-      sidebarStructure = new
+    guard new != sidebarStructure else { return }
+    sidebarStructure = new
+    // Here as well as in the hook, so a direct caller (tests, the initial
+    // load) never leaves the visible copy behind the full one.
+    recomputeVisibleSidebarStructureIfChanged()
+  }
+
+  /// Refilters the cached structure against the ⌘F query. Rows match on
+  /// their name, branch, subtitle and custom title; repositories on their name
+  /// and custom sidebar title; groups and failed roots on their shown name.
+  mutating func recomputeVisibleSidebarStructureIfChanged() {
+    let isFiltering = search.activeQuery != nil
+    if isFiltering != isSidebarFiltering {
+      isSidebarFiltering = isFiltering
+    }
+    let new: SidebarStructure
+    if let query = search.activeQuery {
+      let items = sidebarItems
+      let repositories = repositories
+      let sections = sidebar.sections
+      let repositoryMatches = { (id: Repository.ID) in
+        SearchMatch.matches(query, any: [repositories[id: id]?.name, sections[id]?.title])
+      }
+      new = sidebarStructure.filtered(
+        rowMatches: { id in
+          guard let item = items[id: id] else { return false }
+          // Its repository's name counts too, so a row hoisted into Pinned or
+          // Active stays with the rest of a matched repository.
+          return repositoryMatches(item.repositoryID)
+            || SearchMatch.matches(query, any: [item.name, item.branchName, item.subtitle, item.customTitle])
+        },
+        repositoryMatches: repositoryMatches,
+        textMatches: { SearchMatch.matches(query, $0) })
+    } else {
+      new = sidebarStructure
+    }
+    if new != visibleSidebarStructure {
+      visibleSidebarStructure = new
     }
   }
 
@@ -461,14 +558,23 @@ struct CacheInvalidations: OptionSet {
   /// Set it on any arm whose inputs (the repository roster, the installed
   /// editors, the open-action settings) can change the map.
   static let openActionResolution = CacheInvalidations(rawValue: 1 << 4)
+  /// The ⌘F-filtered copy of `sidebarStructure`. Set by the filter's own
+  /// actions; `.sidebarStructure` implies it, so a rebuild always refilters.
+  static let visibleSidebarStructure = CacheInvalidations(rawValue: 1 << 5)
   /// The four row-derived sidebar caches. Excludes `.openActionResolution`,
   /// which is keyed by repository: no worktree-level mutation (rename, archive,
   /// delete, customize) can change the open-action map.
   static let allSidebar: CacheInvalidations = [
-    .sidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups, .sidebarSelectionSlice,
+    .sidebarStructure, .visibleSidebarStructure, .selectedWorktreeSlice, .toolbarNotificationGroups,
+    .sidebarSelectionSlice,
   ]
   /// Every bit: the row-derived caches plus the roster-scoped open-action resolution.
   static let all: CacheInvalidations = [.allSidebar, .openActionResolution]
+
+  /// Whether the action changed an input of the structures derived downstream
+  /// (menu snapshot, Fleet grid). The sidebar's ⌘F filter only reprojects the
+  /// structure it already has, so its bit alone does not count.
+  var changesStructureInputs: Bool { !subtracting(.visibleSidebarStructure).isEmpty }
 }
 
 extension SidebarItemFeature.Action {
@@ -509,6 +615,8 @@ extension RepositoriesFeature.Action {
       return inner.cacheInvalidations
     case .sidebarItems:
       return []
+    case .search:
+      return .visibleSidebarStructure
 
     // Sidebar layout toggles only. `setMoveNotifiedWorktreeToTop` re-sorts the
     // highlight sections (unread float), so a runtime toggle must recompute.
@@ -717,6 +825,11 @@ extension RepositoriesFeature.State {
   mutating func applyCacheRecomputes(_ invalidations: CacheInvalidations) {
     if invalidations.contains(.sidebarStructure) {
       recomputeSidebarStructureIfChanged()
+    }
+    // On either bit: a row's text (name, branch, title) changes without
+    // changing the structure, which is rowIDs only, and the filter reads text.
+    if !invalidations.isDisjoint(with: [.sidebarStructure, .visibleSidebarStructure]) {
+      recomputeVisibleSidebarStructureIfChanged()
     }
     if invalidations.contains(.selectedWorktreeSlice) {
       recomputeSelectedWorktreeSliceIfChanged()

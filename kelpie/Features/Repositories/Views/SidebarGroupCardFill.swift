@@ -37,19 +37,23 @@ struct SidebarGroupCardFill: View {
     // fills would lighten a dark sidebar instead.
     .fill(Color.black.opacity(colorScheme == .dark ? 0.22 : 0.06))
     .padding(.horizontal, Self.horizontalInset)
-    .padding(.top, edge.roundsTop ? Self.verticalInset : 0)
+    // The top edge also leaves the gap between this card and whatever sits
+    // above it; the row content pads by the same amount (see below).
+    .padding(.top, edge.roundsTop ? Self.verticalInset + SidebarNestLayout.sectionSpacing : 0)
     .padding(.bottom, edge.roundsBottom ? Self.verticalInset : 0)
   }
 }
 
 extension View {
-  /// Paints this row's slice of a group card when it sits inside one, and
-  /// gives the row that closes the card room below it; rows outside a card
-  /// (`nil`) keep the sidebar's own background.
+  /// Paints this row's slice of a group card when it sits inside one. The row
+  /// that opens the card carries the gap above it, the row that closes it
+  /// gets room below; rows outside a card (`nil`) keep the sidebar's own
+  /// background.
   @ViewBuilder
   func groupCardRowBackground(_ edge: SidebarGroupCardEdge?) -> some View {
     if let edge {
-      padding(.bottom, edge == .bottom ? SidebarGroupCardFill.closingRowBottomSpace : 0)
+      padding(.top, edge.roundsTop ? SidebarNestLayout.sectionSpacing : 0)
+        .padding(.bottom, edge == .bottom ? SidebarGroupCardFill.closingRowBottomSpace : 0)
         .listRowBackground(SidebarGroupCardFill(edge: edge))
     } else {
       self

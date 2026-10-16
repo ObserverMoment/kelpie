@@ -13,6 +13,8 @@ enum FleetViewKeyDecision: Equatable, Sendable {
   case markDone
   /// Space: the selected Threads tile's terminal.
   case jump
+  /// Tab: the keys go to the shown thread's reply box.
+  case focusReply
   case swallow
   case menuShortcut
 
@@ -35,6 +37,7 @@ enum FleetViewKeyDecision: Equatable, Sendable {
     case .upArrow?: return .move(.up)
     case .downArrow?: return .move(.down)
     case .carriageReturn?, .enter?: return .activate
+    case .tab?: return .focusReply
     default:
       switch keyCode {
       case escapeKeyCode: return .dismiss

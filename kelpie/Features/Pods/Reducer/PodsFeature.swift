@@ -35,6 +35,15 @@ struct PodsFeature {
     /// else goes to them until they do, so prompts never land back to back.
     var awaitingTurn: Set<UUID> = []
     var structure: PodStructure = .empty
+    /// The ⌘F filter over pod and member names.
+    var search = SearchFilterFeature.State()
+    /// `structure` pruned to `filteredQuery`; only read while a query is active.
+    var filteredStructure: PodStructure = .empty
+    /// The query `filteredStructure` was built for; `nil` once dismissed.
+    var filteredQuery: String?
+    /// What the list draws and the arrows walk: the filtered pods while a
+    /// query is active, else every pod.
+    var visibleStructure: PodStructure { search.activeQuery == nil ? structure : filteredStructure }
     /// The member tile the arrow keys are on; nil until the first arrow press.
     var focusedMemberID: UUID?
     /// Member tiles per row, reported by the view so arrows match what is drawn.
@@ -52,15 +61,36 @@ struct PodsFeature {
     }
 
     /// Member tile ids in drawn order, one array per pod.
-    var memberIDsByPod: [[UUID]] { structure.pods.map { $0.members.map(\.id) } }
+    var memberIDsByPod: [[UUID]] { visibleStructure.pods.map { $0.members.map(\.id) } }
 
     /// Stores a freshly computed structure when it changed and keeps the focus on
     /// a surviving member tile (or its nearest neighbour). Called from the
     /// parent's post-reduce step.
     mutating func applyStructure(_ next: PodStructure) {
       guard next != structure else { return }
-      let previous = memberIDsByPod.flatMap { $0 }
+      let previous = shownMemberIDs
       structure = next
+      refilterStructure(previous: previous)
+    }
+
+    /// Re-derives the filtered pods from the full structure and the live
+    /// query, keeping the focus on a visible member tile (or its neighbour).
+    mutating func refilterStructure() {
+      refilterStructure(previous: shownMemberIDs)
+    }
+
+    /// The member tiles drawn before this refilter: the search's child reducer
+    /// has already written the new query, so `visibleStructure` would read a
+    /// copy built for the previous one (or none).
+    private var shownMemberIDs: [UUID] {
+      (filteredQuery == nil ? structure : filteredStructure).pods.flatMap { $0.members.map(\.id) }
+    }
+
+    private mutating func refilterStructure(previous: [UUID]) {
+      if let query = search.activeQuery {
+        filteredStructure = structure.filtered(query: query)
+      }
+      filteredQuery = search.activeQuery
       focusedMemberID = FleetViewNavigation.reconcile(
         focused: focusedMemberID, previous: previous, current: memberIDsByPod.flatMap { $0 })
     }
@@ -85,6 +115,9 @@ struct PodsFeature {
     case registrationTimedOut(surfaceID: UUID)
     case departureGraceElapsed(surfaceID: UUID)
     case turnLatchExpired(surfaceID: UUID)
+    case search(SearchFilterFeature.Action)
+    /// The Fleet overlay closed.
+    case overlayDismissed
     case delegate(Delegate)
   }
 
@@ -108,8 +141,24 @@ struct PodsFeature {
   }
 
   var body: some Reducer<State, Action> {
+    Scope(state: \.search, action: \.search) {
+      SearchFilterFeature()
+    }
     Reduce { state, action in
       switch action {
+      case .search(.queryChanged), .search(.dismissed):
+        state.refilterStructure()
+        return .none
+
+      case .search:
+        return .none
+
+      case .overlayDismissed:
+        // Reopening starts unfiltered.
+        state.search = SearchFilterFeature.State()
+        state.refilterStructure()
+        return .none
+
       case .newPodTapped:
         state.editor = PodEditorFeature.State(
           mode: .create, podName: Self.defaultPodName(existing: state.pods.map(\.name)),

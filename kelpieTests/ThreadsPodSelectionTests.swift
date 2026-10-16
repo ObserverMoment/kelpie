@@ -15,7 +15,8 @@ struct ThreadsPodSelectionTests {
   private static func row(_ id: UUID, memberName: String?, isStale: Bool = false) -> ThreadsStructure.Row {
     ThreadsStructure.Row(
       id: id, worktreeID: worktreeID, tab: nil, worktreeName: "wt", repositoryName: "repo",
-      agent: .claude, unreadCount: 0, messageCount: 1, isStale: isStale, summary: nil, memberName: memberName)
+      agent: .claude, unreadCount: 0, messageCount: 1, isStale: isStale, summary: nil, memberName: memberName,
+      branchName: nil)
   }
 
   /// Two members in a pod and one session on its own, each with one message.
@@ -82,10 +83,25 @@ struct ThreadsPodSelectionTests {
     #expect(store.state.visibleMemberIDs == [alpha, beta])
   }
 
+  @Test(.dependencies) func aPaneInAPodOpensThePodThreadWithEveryMemberShowing() async {
+    let fixture = Self.makeStore()
+    let (store, alpha, beta, loner) = (fixture.store, fixture.alpha, fixture.beta, fixture.loner)
+    await store.send(.tileSelected(.pod(Self.podID)))
+    await store.send(.memberToggled(podID: Self.podID, surfaceID: alpha))
+    #expect(store.state.messageGroups.map(\.id) == [beta])
+
+    await store.send(.threadSelected(forSurface: beta))
+    #expect(store.state.selectedThreadID == .pod(Self.podID))
+    #expect(store.state.visibleMemberIDs == [alpha, beta])
+
+    await store.send(.threadSelected(forSurface: loner))
+    #expect(store.state.selectedThreadID == .session(loner))
+  }
+
   @Test(.dependencies) func aMemberTileShowsThePodThreadNarrowedToThatMember() async {
     let fixture = Self.makeStore()
     let (store, alpha, beta) = (fixture.store, fixture.alpha, fixture.beta)
-    await store.send(.threadSelected(forSurface: beta))
+    await store.send(.tileSelected(.session(beta)))
     #expect(store.state.selectedThreadID == .session(beta))
     #expect(store.state.displayedThreadID == .pod(Self.podID))
     #expect(store.state.messageGroups.map(\.id) == [beta])

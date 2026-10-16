@@ -213,6 +213,16 @@ struct AppShortcutsTests {
     #expect(AppShortcuts.conflictWarnings(from: [:])[.readLastAgentMessageAloud] == nil)
   }
 
+  @Test func showThreadShortcutHasNoDefaultConflict() {
+    #expect(AppShortcuts.conflictWarnings(from: [:])[.showThread] == nil)
+  }
+
+  @Test func showThreadKeyRoundTrips() {
+    let decoded = AppShortcutID(codingKey: PlainCodingKey("showThread"))
+    #expect(decoded == .showThread)
+    #expect(decoded?.codingKey.stringValue == "showThread")
+  }
+
   @Test func toggleWindowModeShortcutHasNoDefaultConflict() {
     #expect(AppShortcuts.conflictWarnings(from: [:])[.toggleWindowMode] == nil)
   }

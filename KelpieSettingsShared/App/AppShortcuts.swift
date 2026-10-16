@@ -22,7 +22,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
   case splitRight, splitLeft, splitDown, splitUp
   case focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown
   case toggleSplitZoom, equalizeSplits
-  case jumpToLatestUnread, showLastAgentMessage, readLastAgentMessageAloud
+  case jumpToLatestUnread, showLastAgentMessage, readLastAgentMessageAloud, showThread
   case togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector
   case startSearch, findNext, findPrevious, useSelectionForFind
 
@@ -98,6 +98,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .jumpToLatestUnread: "jumpToLatestUnread"
     case .showLastAgentMessage: "showLastAgentMessage"
     case .readLastAgentMessageAloud: "readLastAgentMessageAloud"
+    case .showThread: "showThread"
     case .togglePullRequestInspector: "togglePullRequestInspector"
     case .toggleFilesInspector: "toggleFilesInspector"
     case .toggleNotificationsInspector: "toggleNotificationsInspector"
@@ -161,6 +162,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     "jumpToLatestUnread": .jumpToLatestUnread,
     "showLastAgentMessage": .showLastAgentMessage,
     "readLastAgentMessageAloud": .readLastAgentMessageAloud,
+    "showThread": .showThread,
     "togglePullRequestInspector": .togglePullRequestInspector,
     "toggleFilesInspector": .toggleFilesInspector,
     "toggleNotificationsInspector": .toggleNotificationsInspector,
@@ -243,6 +245,7 @@ public nonisolated enum AppShortcutID: Codable, Hashable, Sendable, CodingKeyRep
     case .jumpToLatestUnread: "Jump to Latest Unread"
     case .showLastAgentMessage: "Show Last Agent Message"
     case .readLastAgentMessageAloud: "Read Last Agent Message Aloud"
+    case .showThread: "Show Thread"
     case .togglePullRequestInspector: "Toggle Pull Request Inspector"
     case .toggleFilesInspector: "Toggle Files Inspector"
     case .toggleNotificationsInspector: "Toggle Notifications Inspector"
@@ -607,11 +610,12 @@ public enum AppShortcuts {
     id: .jumpToLatestUnread, key: "u", modifiers: [.command, .shift]
   )
   public static let showLastAgentMessage = AppShortcut(
-    id: .showLastAgentMessage, key: "n", modifiers: [.command, .control]
+    id: .showLastAgentMessage, key: "b", modifiers: [.command, .control]
   )
   public static let readLastAgentMessageAloud = AppShortcut(
-    id: .readLastAgentMessageAloud, key: "m", modifiers: [.command, .control]
+    id: .readLastAgentMessageAloud, key: "n", modifiers: [.command, .control]
   )
+  public static let showThread = AppShortcut(id: .showThread, key: "m", modifiers: [.command, .control])
   public static let togglePullRequestInspector = AppShortcut(
     id: .togglePullRequestInspector, key: "g", modifiers: [.command, .option]
   )
@@ -706,7 +710,8 @@ public enum AppShortcuts {
       shortcuts: [
         openWorktree, revealInFinder, openRepository, addRemoteRepository, cloneRepository,
         openPullRequest, copyPath, runScript, stopRunScript, jumpToLatestUnread, showLastAgentMessage,
-        readLastAgentMessageAloud, togglePullRequestInspector, toggleFilesInspector, toggleNotificationsInspector,
+        readLastAgentMessageAloud, showThread, togglePullRequestInspector, toggleFilesInspector,
+        toggleNotificationsInspector,
       ]
     ),
   ]

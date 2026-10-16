@@ -27,6 +27,15 @@ struct ThreadsStructure: Equatable, Sendable {
     let summary: String?
     /// The member's name in its pod; `nil` for a session in no pod.
     let memberName: String?
+    /// The worktree's branch, for the ⌘F tile filter; `nil` once the sidebar row is gone.
+    let branchName: String?
+
+    /// The tile filter: the member name, stored tab title, worktree, repository,
+    /// branch or one-line summary contains the query.
+    func matches(_ query: String) -> Bool {
+      SearchMatch.matches(
+        query, any: [memberName, tab?.title, worktreeName, repositoryName, branchName, summary])
+    }
   }
 
   struct PodRow: Identifiable, Equatable, Sendable {
@@ -83,6 +92,24 @@ struct ThreadsStructure: Equatable, Sendable {
     return sessions.contains { $0.id == surfaceID } ? .session(surfaceID) : nil
   }
 
+  /// The tiles the ⌘F filter keeps: a pod whose name matches keeps every
+  /// member, otherwise only its matching members; emptied pods and
+  /// non-matching sessions drop out. `nil` keeps everything.
+  func filtered(query: String?) -> ThreadsStructure {
+    guard let query else { return self }
+    return ThreadsStructure(
+      tiles: tiles.compactMap { tile in
+        switch tile {
+        case .pod(let pod):
+          if SearchMatch.matches(query, pod.name) { return tile }
+          let members = pod.members.filter { $0.matches(query) }
+          return members.isEmpty ? nil : .pod(PodRow(id: pod.id, name: pod.name, members: members))
+        case .session(let row):
+          return row.matches(query) ? tile : nil
+        }
+      })
+  }
+
   /// The arrow-key order: each pod, then its members while expanded, then
   /// the unpodded sessions. A member is addressed by its own session id.
   func navigationOrder(expandedPods: Set<PodID>) -> [ThreadID] {
@@ -123,7 +150,8 @@ struct ThreadsStructure: Equatable, Sendable {
         messageCount: box.messages.count,
         isStale: !isLive,
         summary: box.summary,
-        memberName: memberName)
+        memberName: memberName,
+        branchName: item?.branchName)
     }
     let podRows = inputs.pods.compactMap { pod -> PodRow? in
       let members = pod.members.compactMap { member in

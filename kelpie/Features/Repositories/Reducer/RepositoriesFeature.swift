@@ -274,6 +274,15 @@ struct RepositoriesFeature {
     /// in the recompute helper keeps a no-op rebuild from invalidating
     /// SwiftUI when the user-visible layout didn't actually change.
     var sidebarStructure: SidebarStructure = .placeholder
+    /// `sidebarStructure` pruned to the ⌘F filter; equal to it while no query
+    /// is active. The list renders this one; hotkeys and Fleet keep the full value.
+    var visibleSidebarStructure: SidebarStructure = .placeholder
+    /// The sidebar's ⌘F filter field.
+    var search = SearchFilterFeature.State()
+    /// Cached `search.activeQuery != nil`, refreshed with `visibleSidebarStructure`,
+    /// so per-repository views observe a value that flips only when filtering
+    /// starts or stops, not on every keystroke.
+    var isSidebarFiltering = false
     /// Cached projection of the focused row's display fields. The detail body
     /// reads this directly instead of `sidebarItems[id: id]` so per-leaf agent
     /// / notification mutations on the focused row don't invalidate the
@@ -613,6 +622,7 @@ struct RepositoriesFeature {
     case toggleInspectorPane(WorktreeInspectorPane)
     case setInspectorPresented(Bool)
     case fileExplorer(FileExplorerFeature.Action)
+    case search(SearchFilterFeature.Action)
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
@@ -3574,8 +3584,14 @@ struct RepositoriesFeature {
     Scope(state: \.fileExplorer, action: \.fileExplorer) {
       FileExplorerFeature()
     }
+    Scope(state: \.search, action: \.search) {
+      SearchFilterFeature()
+    }
     Reduce { state, action in
       switch action {
+      case .search:
+        return .none
+
       case .task:
         // `sidebar` is already hydrated from `sidebar.json` (loaded
         // synchronously by the SharedKey when State is constructed),
@@ -3909,6 +3925,9 @@ struct RepositoriesFeature {
         )
 
       case .repositoryExpansionChanged(let repositoryID, let isExpanded):
+        // Every repository is held open while the ⌘F filter is active, so a
+        // chevron click then must not rewrite the stored state for afterwards.
+        guard !state.isSidebarFiltering else { return .none }
         state.$sidebar.withLock { sidebar in
           // Writing the explicit bit (true / false) instead of
           // adding/removing from a set lets future default-flip
@@ -3918,6 +3937,10 @@ struct RepositoriesFeature {
         return .none
 
       case .branchNestExpansionChanged(let repositoryID, let bucketID, let prefix, let isExpanded):
+        // Every prefix is held open while the ⌘F filter is active (see
+        // `isRepositoryExpanded`), so a chevron click then must not rewrite
+        // the stored state for afterwards.
+        guard !state.isSidebarFiltering else { return .none }
         // Only `.pinned` / `.unpinned` render nested rows; `.archived` has no
         // chevron and would just bloat `sidebar.json` with dead entries. Also
         // refuse to materialize a phantom section for an unknown repo: the
@@ -5691,8 +5714,11 @@ extension RepositoriesFeature.State {
     return repositoryIDs.subtracting(collapsedSet).union(pendingRepositoryIDs)
   }
 
+  /// Every repository opens while the ⌘F filter is active, so a matching row
+  /// inside a collapsed one is seen (user groups open the same way in
+  /// `SidebarStructure.filtered`).
   func isRepositoryExpanded(_ repositoryID: Repository.ID) -> Bool {
-    expandedRepositoryIDs.contains(repositoryID)
+    isSidebarFiltering || expandedRepositoryIDs.contains(repositoryID)
   }
 
   // Menu/UI enablement for ⌘⌃← / ⌘⌃→. Raw `!isEmpty` lies whenever
@@ -5775,12 +5801,17 @@ extension RepositoriesFeature.State {
   /// group is not a stop, and a hidden sidebar has no header to land on, so both
   /// keep the nearest-visible-row fallback.
   func sidebarNavigationStop(byOffset offset: Int) -> SidebarStructure.NavigationStop? {
-    let stops = sidebarStructure.navigationStops
+    let stops = visibleSidebarStructure.navigationStops(everyRowShown: isSidebarFiltering)
     let current =
       keyboardFocusedGroupID.map(SidebarStructure.NavigationStop.group)
       ?? selectedWorktreeID.map(SidebarStructure.NavigationStop.worktree)
     if isSidebarVisible, let current, let index = stops.firstIndex(of: current) {
       return stops[(index + offset + stops.count) % stops.count]
+    }
+    // Under a ⌘F filter the unfiltered fallback would land on rows the list
+    // does not draw: a hidden selection enters the visible run at its end.
+    if isSidebarFiltering, isSidebarVisible {
+      return offset > 0 ? stops.first : stops.last
     }
     return worktreeID(byOffset: offset).map(SidebarStructure.NavigationStop.worktree)
   }

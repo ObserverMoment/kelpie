@@ -21,12 +21,15 @@ struct PodsView: View {
             .help("Create a pod from running Claude Code sessions")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if store.visibleStructure.pods.isEmpty, let query = store.search.activeQuery {
+        ContentUnavailableView.search(text: query)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         ScrollViewReader { scrollProxy in
           ScrollView {
             // Not lazy: `scrollTo` has to resolve a member tile in a pod that is off screen.
             VStack(alignment: .leading, spacing: 20) {
-              ForEach(store.structure.pods) { pod in
+              ForEach(store.visibleStructure.pods) { pod in
                 PodCardView(
                   pod: pod,
                   columnCount: store.columnCount,

@@ -14,7 +14,7 @@ struct SummaryPromptTests {
     #expect(request.model == .sonnet)
     #expect(request.effort == .medium)
     #expect(request.systemPrompt.contains("pod of coding agents"))
-    #expect(request.systemPrompt.contains("at most 400 characters"))
+    #expect(request.systemPrompt.contains("about 70 words; 85 words is the absolute most"))
     let expected = """
       <previous-summary>
       So far
@@ -34,7 +34,7 @@ struct SummaryPromptTests {
   @Test func firstRunSaysThereIsNoSummaryYet() {
     let prompt = SummaryPrompt.prompt(previous: nil, newMessages: ["hi"])
     #expect(prompt.hasPrefix("<previous-summary>(none yet)</previous-summary>"))
-    #expect(SummaryPrompt.systemPrompt(for: .session).contains("at most 280 characters"))
+    #expect(SummaryPrompt.systemPrompt(for: .session).contains("about 70 words; 85 words is the absolute most"))
   }
 
   @Test func truncateKeepsShortTextAndCapsLongText() {

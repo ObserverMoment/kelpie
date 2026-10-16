@@ -44,7 +44,7 @@ struct ContentView: View {
       set: { if !store.fleetView.isPresented { leftSidebarVisibility = $0 } }
     )
     return NavigationSplitView(columnVisibility: columnVisibility) {
-      SidebarView(store: repositoriesStore, terminalManager: terminalManager)
+      SidebarView(store: repositoriesStore, terminalManager: terminalManager, isOverlayPresented: isFleetPresented)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
         .safeAreaInset(edge: .bottom, spacing: 0) {
           SidebarBottomCardView(store: store)
@@ -89,16 +89,18 @@ struct ContentView: View {
     // Fleet View closes, so only a permanently mounted host can deactivate the
     // monitor for the exit transition.
     .background {
-      // Off in the pod workspace and the mail viewer: their terminals and reply
-      // box take every keystroke, Escape included.
+      // Off in the pod workspace, the mail viewer and a ⌘F field: their
+      // terminals, reply box and filter take every keystroke, Escape included.
       FleetViewKeyMonitor(
         isActive: store.fleetView.isPresented && !store.fleetView.isShowingPodWorkspace && !store.mailViewerTakesKeys
+          && !store.searchFieldTakesKeys
       ) {
         decision in
         switch decision {
         case .move(let direction): store.send(.fleetView(.moveFocus(direction)))
         case .activate: store.send(.fleetView(.activateFocusedCard))
         case .dismiss: store.send(.overlayEscapePressed)
+        case .focusReply: store.send(.overlayTabPressed)
         case .markDone: store.send(.fleetView(.markFocusedDone))
         case .jump: store.send(.fleetView(.jumpToFocused))
         case .swallow, .menuShortcut: break

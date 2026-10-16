@@ -20,13 +20,19 @@ nonisolated enum SummaryPrompt {
   /// wants the gist, and the whole command has to fit the kernel's limit.
   static let maxMessageCharacters = 4000
 
-  /// A session summary also sits on a pod chip, so it stays shorter than a pod's.
+  /// Three lines of the thread header at a typical window width, about 185
+  /// characters a line. A backstop: the prompt asks for a word budget that
+  /// lands well under it, since a model counts words far better than characters.
   static func cap(for kind: Kind) -> Int {
     switch kind {
-    case .session: 280
-    case .pod: 400
+    case .session, .pod: 560
     }
   }
+
+  /// What the prompt asks for. About 6.5 characters a word including the
+  /// space, so the ceiling sits around 550 characters and the target around 450.
+  static let targetWords = 70
+  static let maxWords = 85
 
   static func request(
     kind: Kind, previous: String?, newMessages: [String], model: ThreadSummaryModel, effort: ThreadSummaryEffort
@@ -47,9 +53,10 @@ nonisolated enum SummaryPrompt {
     return """
       You keep a running summary of \(subject). You are given the previous summary and the \
       messages the agent ended its latest turns with. Rewrite the summary so it covers everything \
-      so far, favouring what is happening now and what is left to do over history. Plain prose, at \
-      most \(cap(for: kind)) characters, no headings, no bullet points, no preamble. Reply with the \
-      summary text only.
+      so far, favouring what is happening now and what is left to do over history. Plain prose of \
+      about \(targetWords) words; \(maxWords) words is the absolute most, and anything longer is cut \
+      off mid-sentence, so end cleanly before then. No headings, no bullet points, no preamble. \
+      Reply with the summary text only.
       """
   }
 

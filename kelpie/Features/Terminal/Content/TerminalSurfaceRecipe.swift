@@ -301,6 +301,8 @@ struct TerminalContentBuilder {
   var showLastMessage: (ContentID) -> Void
   /// Reads a content's newest Threads message aloud, behind its strip button.
   var readLastMessageAloud: (ContentID) -> Void
+  /// Opens a content's thread in Threads, behind its strip button.
+  var showThread: (ContentID) -> Void
 
   func factory() -> LayoutContentFactory {
     LayoutContentFactory { request in
@@ -383,6 +385,8 @@ struct TerminalContentBuilder {
     content.terminalChrome.showLastMessage = { showLastMessage(request.contentID) }
     let readLastMessageAloud = readLastMessageAloud
     content.terminalChrome.readLastMessageAloud = { readLastMessageAloud(request.contentID) }
+    let showThread = showThread
+    content.terminalChrome.showThread = { showThread(request.contentID) }
     return content
   }
 }
